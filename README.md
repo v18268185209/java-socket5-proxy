@@ -1,377 +1,412 @@
-﻿# Proxy Hub
+# Proxy Hub
 
-Netty + Spring Boot based enterprise proxy gateway.
+`Proxy Hub` 是一个基于 Spring Boot 3、Netty 与可选 Squid 引擎构建的代理网关项目，提供以下能力：
 
-- SOCKS5 proxy (RFC 1928, CONNECT)
-- HTTP proxy
-- HTTPS CONNECT tunnel proxy
-- ACL policy (client CIDR whitelist, target host/port deny list)
-- Optional auth for SOCKS5 and HTTP proxy
-- Optional management-plane auth and CIDR restriction
-- Per-client active connection quota
-- Visual dashboard + runtime control APIs
-- Java native MenuOps operation center (covers menu.sh capability set, no direct menu.sh invocation)
-- `java -jar` runnable, with CentOS7 startup scripts
+- SOCKS5 代理
+- HTTP 代理
+- HTTPS CONNECT 隧道
+- 可视化控制台
+- 运行态自检与指标统计
+- ACL 访问控制
+- 客户端认证
+- 代理连通性探测
 
-## 1. Architecture
+它适合用作自建代理出口、联调测试代理、统一管理 SOCKS5 与 HTTP 代理的中间层服务。
 
-Control plane and data plane are separated:
+## 项目概览
 
-- Control plane:
-  - Spring Boot Web + Thymeleaf dashboard
-  - Runtime APIs for start/stop/restart and status query
-  - Metrics/observability APIs
-  - MenuOps async job engine (Java-native operation handlers)
-- Data plane:
-  - Netty listeners for SOCKS5 and HTTP
-  - CONNECT tunnel and stream relay through bridge handlers
+项目采用“管理面 + 数据面”分离的结构：
 
-Listener mode is dual-port by design:
+- 管理面：Spring Boot Web、Thymeleaf 控制台、运行控制 API、自检与探测接口
+- 数据面：Netty SOCKS5 监听、HTTP 代理监听，或通过外部 Squid 提供 HTTP 代理能力
 
-- `proxy.socks.port`: SOCKS5 listener
-- `proxy.http.port`: HTTP/HTTPS proxy listener
+默认采用双端口设计：
 
-This avoids protocol ambiguity and is easier to operate in production.
+- `proxy.socks.port=1080`：SOCKS5 监听端口
+- `proxy.http.port=8080`：HTTP/HTTPS 代理监听端口
+- `server.port=9090`：管理控制台与管理 API 端口
 
-## 2. Build
+## 核心功能
 
-Requirements:
+- 支持 SOCKS5 `CONNECT`
+- 支持 HTTP 代理与 HTTPS `CONNECT` 隧道转发
+- 支持 SOCKS5 用户名密码认证
+- 支持 HTTP Basic 代理认证
+- 支持客户端 CIDR 白名单
+- 支持目标主机黑名单与目标端口黑名单
+- 支持单客户端最大并发连接数限制
+- 提供运行时启停、重启、重载接口
+- 提供活动连接、失败原因、流量、协议分布等指标
+- 提供代理探测与场景探测接口
+- 支持 `java -jar` 直接运行
+- 提供 CentOS7 / Ubuntu 打包与部署脚本
 
-- JDK 17+
-- Maven 3.8+
+## 当前实现状态
 
-Build jar:
+为避免文档与代码脱节，下面按当前仓库中的实际实现状态说明：
+
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| SOCKS5 代理 | 已实现 | 基于 Netty，支持 `CONNECT` 和可选用户名密码认证 |
+| HTTP 代理 | 已实现 | 可使用内置 Netty 引擎或外部 Squid 引擎 |
+| HTTPS CONNECT 隧道 | 已实现 | 透传隧道，不做 MITM 解密 |
+| ACL 访问控制 | 已实现 | 支持客户端 CIDR 白名单、目标主机/端口拦截 |
+| 管理控制台 | 已实现 | 支持运行态查看、指标展示、自检、代理探测 |
+| 运行时控制 API | 已实现 | 支持 `start / stop / restart / reload / status / self-check` |
+| 代理探测接口 | 已实现 | 支持普通代理探测与场景探测 |
+| Squid 外部引擎 | 已实现 | 可托管生成 `squid.conf`，并解析 access log 汇总指标 |
+| MenuOps 诊断文件接口 | 已实现 | 支持诊断目录汇总、文件列表、下载、删除 |
+| MenuOps 审计查询 | 已实现 | 支持读取 SQLite 审计记录与汇总 |
+| MenuOps 作业目录/提交/取消 | 预留中 | 当前服务实现为简化占位版，目录为空，作业提交返回不支持 |
+| WARP 相关快捷操作 | 预留中 | 前端脚本中保留了相关结构，但当前版本未真正启用 |
+
+如果你只是想要一个可运行的 SOCKS5 / HTTP 代理网关，当前项目已经具备可用基础能力；如果你希望直接使用 README 中历史版本提到的完整 WARP / MenuOps 作业编排能力，请先以当前代码为准进行二次实现或补全。
+
+## 目录结构
+
+```text
+.
+├─bin/                         启停脚本、打包脚本、systemd 服务文件
+├─conf/                        生产配置与 squid 配置
+├─src/main/java/               核心代码
+│  ├─config/                   配置对象
+│  ├─core/                     运行时管理、ACL、指标、网络桥接
+│  ├─socks/                    SOCKS5 代理实现
+│  ├─http/                     HTTP 代理与 Squid 外部引擎实现
+│  └─management/               控制台、API、探测、自检、安全控制
+├─src/main/resources/
+│  ├─application.yml           默认配置
+│  ├─templates/dashboard.html  控制台页面
+│  └─static/                   前端样式与脚本
+└─pom.xml                      Maven 构建配置
+```
+
+## 技术栈
+
+- Java 17
+- Spring Boot 3.3.6
+- Netty 4.1.115.Final
+- Thymeleaf
+- SQLite JDBC
+- 可选外部组件：Squid
+
+## 构建要求
+
+- JDK 17 或更高版本
+- Maven 3.8 或更高版本
+
+构建命令：
 
 ```bash
 mvn clean package -DskipTests
 ```
 
-Run automated tests:
+运行测试：
 
 ```bash
 mvn test
 ```
 
-Jar output example:
+构建完成后，可执行 Jar 通常位于：
 
-- `target/proxy-hub-1.0.0.jar`
-
-## 3. Run (`java -jar`)
-
-### 3.1 Local quick start
-
-```bash
-java -jar target/proxy-hub-1.0.0.jar
+```text
+target/proxy-hub-1.0.0.jar
 ```
 
-Dashboard:
+## 快速开始
 
-- `http://127.0.0.1:9090/dashboard`
+### 1. 本地开发推荐启动方式
 
-### 3.2 Use external production config
+项目默认配置文件 `src/main/resources/application.yml` 中，HTTP 引擎为：
+
+```yaml
+proxy:
+  http:
+    engine: squid
+```
+
+这意味着如果你的机器没有安装 `squid`，HTTP 监听器可能无法正常启动。对于本地开发，尤其是 Windows 环境，推荐显式切换到内置 Netty HTTP 引擎：
+
+```bash
+java -jar target/proxy-hub-1.0.0.jar --proxy.http.engine=legacy
+```
+
+如果你当前只需要 SOCKS5，也可以直接关闭 HTTP 监听：
+
+```bash
+java -jar target/proxy-hub-1.0.0.jar --proxy.http.enabled=false
+```
+
+### 2. 使用外部生产配置启动
 
 ```bash
 java -jar target/proxy-hub-1.0.0.jar \
   --spring.config.location=file:./conf/application-prod.yml
 ```
 
-## 4. CentOS7 deployment
-
-### 4.1 Directory suggestion
-
-```text
-/opt/proxy-hub/
-  bin/
-  conf/
-  logs/
-  run/
-  target/proxy-hub-1.0.0.jar
-```
-
-### 4.2 Script startup
+如果 `conf/application-prod.yml` 里仍使用 `squid` 引擎，请确保目标机器已安装 Squid，或者同时覆盖为：
 
 ```bash
-cd /opt/proxy-hub
-chmod +x bin/*.sh
-
-# start
-bin/start.sh
-
-# status
-bin/status.sh
-
-# stop
-bin/stop.sh
+java -jar target/proxy-hub-1.0.0.jar \
+  --spring.config.location=file:./conf/application-prod.yml \
+  --proxy.http.engine=legacy
 ```
 
-`bin/start.sh` uses:
+### 3. 打开控制台
 
-- `JAVA_OPTS` env (overrideable)
-- `conf/application-prod.yml`
-- pid file: `run/proxy-hub.pid`
-- console log: `logs/console.out`
+应用启动后可访问：
 
-### 4.3 systemd hosting (recommended)
+- 控制台：`http://127.0.0.1:9090/dashboard`
+- 健康检查：`http://127.0.0.1:9090/actuator/health`
 
-1. Copy service file:
+说明：
 
-```bash
-cp /opt/proxy-hub/bin/proxy-hub.service /etc/systemd/system/
+- 应用启动后会自动尝试启动所有已启用的代理监听器
+- 即使某个监听器启动失败，Spring Boot 管理面仍可能继续存活，可通过控制台和日志排查原因
+
+## HTTP 引擎说明
+
+`proxy.http.engine` 支持两种模式：
+
+### `legacy`
+
+内置 Netty HTTP 代理实现，特点：
+
+- 无需安装外部依赖
+- 适合本地开发、测试环境、Windows 环境
+- 启动简单，易于排障
+
+### `squid`
+
+通过外部 Squid 进程提供 HTTP 代理能力，特点：
+
+- 适合已有 Squid 运维习惯的 Linux 环境
+- 支持由项目根据 ACL 自动生成 `squid.conf`
+- 控制台会解析 Squid access log 汇总指标
+
+使用 `squid` 模式时请确保：
+
+- `proxy.http.squid.executable` 可执行
+- `proxy.http.squid.config-path` 可写
+- `proxy.http.squid.workdir` 可写
+- `proxy.http.squid.access-log-path` 所在目录可写
+
+注意：
+
+- 当前 `proxy.http.auth.*` 不会自动映射到 Squid 认证助手，因此若使用 Squid 模式，不应假定 HTTP 代理认证已经完整接入外部引擎
+
+## 关键配置说明
+
+### 监听与认证
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `proxy.socks.enabled` | `true` | 是否启用 SOCKS5 监听 |
+| `proxy.socks.bind-host` | `0.0.0.0` | SOCKS5 绑定地址 |
+| `proxy.socks.port` | `1080` | SOCKS5 端口 |
+| `proxy.socks.auth.enabled` | `false` | 是否启用 SOCKS5 用户名密码认证 |
+| `proxy.http.enabled` | `true` | 是否启用 HTTP 监听 |
+| `proxy.http.bind-host` | `0.0.0.0` | HTTP 绑定地址 |
+| `proxy.http.port` | `8080` | HTTP 端口 |
+| `proxy.http.engine` | `squid` | HTTP 引擎，默认配置文件中为 `squid` |
+| `proxy.http.auth.enabled` | `false` | 是否启用内置 HTTP Basic 代理认证 |
+
+### ACL 与连接限制
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `proxy.acl.enabled` | `false` | 是否启用 ACL |
+| `proxy.acl.allow-client-cidrs` | `[]` | 客户端 CIDR 白名单，空表示不限制 |
+| `proxy.acl.deny-target-hosts` | `localhost, *.internal.local` | 目标主机黑名单 |
+| `proxy.acl.deny-target-ports` | `25, 3306, 6379` | 目标端口黑名单 |
+| `proxy.performance.max-connections-per-client` | `0` | 单客户端最大活动连接数，`0` 表示不限 |
+
+### 管理面访问保护
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `proxy.management.enabled` | `false` | 是否启用管理面保护 |
+| `proxy.management.protect-actuator` | `false` | 是否将 `/actuator/**` 也纳入保护 |
+| `proxy.management.allow-cidrs` | `[]` | 允许访问管理面的客户端 CIDR |
+| `proxy.management.allow-basic-auth` | `true` | 是否允许 Basic Auth |
+| `proxy.management.allow-token-auth` | `false` | 是否允许 Token 认证 |
+| `proxy.management.access-token` | `""` | 管理 Token，对应请求头 `X-ProxyHub-Token` |
+| `proxy.management.basic.username` | `admin` | 管理 Basic Auth 用户名 |
+| `proxy.management.basic.password` | `admin` | 管理 Basic Auth 密码 |
+
+### 控制台与运维附加配置
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `server.port` | `9090` | 管理控制台与 API 端口 |
+| `proxy.dashboard.refresh-seconds` | `2` | 控制台刷新周期 |
+| `menu-ops.enabled` | `true` | 是否暴露 MenuOps 区域配置与接口 |
+| `menu-ops.diagnostics-dir` | `./logs/diagnostics` | 诊断文件目录 |
+| `menu-ops.audit-db-path` | `./logs/menu-ops-audit.db` | MenuOps 审计 SQLite 文件 |
+
+## 一个更接近生产的配置示例
+
+下面是一份更适合实际使用的示例，重点是开启认证、ACL 和管理面保护：
+
+```yaml
+server:
+  port: 9090
+
+proxy:
+  socks:
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 1080
+    auth:
+      enabled: true
+      username: proxy_user
+      password: strong_password
+
+  http:
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 8080
+    engine: legacy
+    auth:
+      enabled: true
+      username: proxy_user
+      password: strong_password
+
+  acl:
+    enabled: true
+    allow-client-cidrs:
+      - 127.0.0.1/32
+      - 10.0.0.0/8
+      - 192.168.0.0/16
+    deny-target-hosts:
+      - localhost
+      - "*.internal.local"
+    deny-target-ports:
+      - 22
+      - 3306
+      - 6379
+
+  performance:
+    max-connections-per-client: 200
+
+  management:
+    enabled: true
+    protect-actuator: true
+    allow-cidrs:
+      - 127.0.0.1/32
+      - 192.168.0.0/16
+    allow-basic-auth: true
+    basic:
+      enabled: true
+      username: admin_ops
+      password: change_me_now
 ```
 
-2. Reload and enable:
+## 控制台与 API
 
-```bash
-systemctl daemon-reload
-systemctl enable proxy-hub
-systemctl start proxy-hub
-```
+### 控制台页面
 
-3. Check:
+- `GET /dashboard`
 
-```bash
-systemctl status proxy-hub
-journalctl -u proxy-hub -f
-```
+控制台可查看：
 
-## 5. Full configuration reference
+- 代理整体运行状态
+- 当前监听器状态
+- 活动连接数、累计连接数、拦截数、认证失败数、连接失败数
+- 入站/出站流量
+- 失败原因统计
+- 活动会话
+- 最近事件
+- 运行态自检信息
+- 代理探测与场景探测结果
+- MenuOps 审计与诊断文件信息
 
-All configurable keys currently used by the project are listed below.
-
-### 5.1 Spring / server / management
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `spring.application.name` | string | `proxy-hub` | Application name |
-| `spring.thymeleaf.cache` | boolean | `false` | Thymeleaf template cache |
-| `server.port` | int | `9090` | Dashboard + management API HTTP port |
-| `management.endpoints.web.exposure.include` | string/list | `health,info,metrics,prometheus` | Exposed actuator endpoints |
-| `management.endpoint.health.show-details` | string | `always` | Health details visibility |
-
-### 5.2 Proxy listeners
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `proxy.socks.name` | string | `SOCKS5` | Display name of SOCKS listener |
-| `proxy.socks.enabled` | boolean | `true` | Enable SOCKS5 listener |
-| `proxy.socks.bind-host` | string | `0.0.0.0` | Bind host for SOCKS5 listener |
-| `proxy.socks.port` | int | `1080` | SOCKS5 listen port |
-| `proxy.socks.auth.enabled` | boolean | `false` | Enable SOCKS5 username/password auth |
-| `proxy.socks.auth.username` | string | `admin` | SOCKS5 auth username |
-| `proxy.socks.auth.password` | string | `admin` | SOCKS5 auth password |
-| `proxy.http.name` | string | `HTTP` | Display name of HTTP listener |
-| `proxy.http.enabled` | boolean | `true` | Enable HTTP/HTTPS proxy listener |
-| `proxy.http.bind-host` | string | `0.0.0.0` | Bind host for HTTP listener |
-| `proxy.http.port` | int | `8080` | HTTP/HTTPS proxy listen port |
-| `proxy.http.engine` | string | `legacy` | HTTP engine selector: `legacy` (Netty in-process) or `squid` (external process) |
-| `proxy.http.auth.enabled` | boolean | `false` | Enable HTTP proxy basic auth |
-| `proxy.http.auth.username` | string | `admin` | HTTP basic auth username |
-| `proxy.http.auth.password` | string | `admin` | HTTP basic auth password |
-| `proxy.http.squid.executable` | string | `squid` | Squid executable path when `proxy.http.engine=squid` |
-| `proxy.http.squid.config-path` | string | `./conf/squid/squid.conf` | Squid config path |
-| `proxy.http.squid.workdir` | string | `.` | Squid process working directory |
-| `proxy.http.squid.access-log-path` | string | `./logs/squid/access.log` | Squid access log path used for dashboard metric ingestion |
-| `proxy.http.squid.manage-config` | boolean | `true` | Render squid config from ProxyHub properties before start/reload |
-| `proxy.http.squid.foreground` | boolean | `true` | Start squid with `-N` so lifecycle is controlled by ProxyHub |
-| `proxy.http.squid.extra-args` | list[string] | `[]` | Extra arguments appended to squid startup command |
-
-Notes for `proxy.http.engine=squid` (current phase):
-
-- ProxyHub controls squid process lifecycle via `ProxyServer` runtime manager.
-- When `proxy.http.squid.manage-config=true`, ProxyHub renders squid ACL rules from `proxy.acl.*`.
-- `GET /api/v1/metrics/overview` will trigger incremental parse of squid access log and map it into dashboard counters.
-- `proxy.http.auth.*` is still not mapped into squid auth helpers in this phase.
-- A bootstrap config file is provided at `conf/squid/squid.conf`; it can be used with `manage-config=false`.
-
-### 5.3 ACL policies
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `proxy.acl.enabled` | boolean | `false` | Enable ACL checks |
-| `proxy.acl.allow-client-cidrs` | list[string] | `[]` | Client CIDR allow list (empty means allow all clients) |
-| `proxy.acl.deny-target-hosts` | list[string] | `localhost,*.internal.local` | Target host deny rules |
-| `proxy.acl.deny-target-ports` | list[int] | `25,3306,6379` | Target port deny list |
-
-### 5.4 Performance
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `proxy.performance.connect-timeout-millis` | int | `10000` | Outbound connect timeout |
-| `proxy.performance.idle-timeout-seconds` | int | `120` | Client idle timeout |
-| `proxy.performance.boss-threads` | int | `1` | Netty boss eventloop threads |
-| `proxy.performance.worker-threads` | int | `0` | Netty worker threads (`0` means Netty default) |
-| `proxy.performance.backlog` | int | `1024` | Socket backlog |
-| `proxy.performance.max-connections-per-client` | int | `0` | Max active sessions per client IP (`0` means unlimited) |
-
-### 5.5 Dashboard and monitoring cache
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `proxy.dashboard.refresh-seconds` | int | `2` | Frontend auto-refresh interval |
-| `proxy.dashboard.max-recent-events` | int | `3000` | In-memory recent events limit |
-| `proxy.dashboard.timezone` | string | `Asia/Shanghai` | Dashboard timezone hint |
-| `proxy.dashboard.warp-runtime-cache-seconds` | int | `6` | Cache TTL for `/api/v1/tools/warp-runtime-status` to reduce shell/network probe overhead |
-| `proxy.dashboard.warp-history-enabled` | boolean | `true` | Enable SQLite persistence for WARP runtime history |
-| `proxy.dashboard.warp-history-db-path` | string | `./logs/warp-history.db` | SQLite file path for WARP history |
-| `proxy.dashboard.warp-history-sample-seconds` | int | `15` | Minimum sampling interval for writing history records |
-| `proxy.dashboard.warp-history-retention-days` | int | `30` | Retention days for automatic history cleanup |
-| `proxy.dashboard.warp-history-max-rows` | int | `100000` | Max retained rows after periodic cleanup |
-| `proxy.dashboard.warp-alert-enabled` | boolean | `true` | Enable WARP alert engine persistence and APIs |
-| `proxy.dashboard.warp-alert-db-path` | string | `./logs/warp-history.db` | SQLite file path for WARP alert events (can share DB with history) |
-| `proxy.dashboard.warp-alert-connecting-threshold` | int | `4` | Consecutive samples threshold to trigger `WARP_CONNECTING_STUCK` |
-| `proxy.dashboard.warp-alert-repeat-cooldown-seconds` | int | `120` | Cooldown for repeated active alert updates with changed details |
-| `proxy.dashboard.warp-alert-retention-days` | int | `30` | Retention days for alert event cleanup |
-| `proxy.dashboard.warp-alert-max-rows` | int | `200000` | Max retained alert events after cleanup |
-
-### 5.6 Management access control
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `proxy.management.enabled` | boolean | `false` | Enable management-plane protection |
-| `proxy.management.protect-actuator` | boolean | `false` | Include `/actuator/**` in protected scope |
-| `proxy.management.allow-cidrs` | list[string] | `[]` | Allowed client CIDRs for management access (empty means allow all) |
-| `proxy.management.allow-basic-auth` | boolean | `true` | Allow HTTP Basic auth for management access |
-| `proxy.management.allow-token-auth` | boolean | `false` | Allow token header auth for management access |
-| `proxy.management.access-token` | string | `""` | Token value for `X-ProxyHub-Token` header |
-| `proxy.management.basic.enabled` | boolean | `true` | Enable basic credential checking |
-| `proxy.management.basic.username` | string | `admin` | Basic auth username |
-| `proxy.management.basic.password` | string | `admin` | Basic auth password |
-
-### 5.7 Logging
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `logging.level.root` | string | `INFO` | Root log level |
-| `logging.level.com.zqzqq.proxyhub` | string | `INFO` | Application package log level |
-
-### 5.8 MenuOps (Java native operation center)
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `menu-ops.enabled` | boolean | `true` | Enable MenuOps job center APIs and UI |
-| `menu-ops.bash-path` | string | `/bin/bash` | Shell executable used by Java operation handlers |
-| `menu-ops.workdir` | string | `.` | Working directory for operation execution |
-| `menu-ops.timeout-seconds` | int | `3600` | Timeout per command step |
-| `menu-ops.max-log-lines` | int | `3000` | Max in-memory log lines per job |
-| `menu-ops.max-history` | int | `100` | Max retained recent jobs |
-| `menu-ops.max-concurrency` | int | `4` | Max concurrent MenuOps worker threads |
-| `menu-ops.allow-raw-args` | boolean | `true` (dev) / `false` (prod) | Allow `RAW_ARGS` operation |
-| `menu-ops.allow-destructive` | boolean | `false` (dev) / `true` (prod sample) | Allow destructive operations (uninstall/install/switch) |
-| `menu-ops.allow-remote-scripts` | boolean | `false` (dev) / `true` (prod sample) | Allow remote script operations (`UPGRADE_BBR`, `MENU_UNLOCK_SCRIPT`) |
-| `menu-ops.audit-log-path` | string | `/var/log/proxy-hub/strategy-audit.log` | Persistent audit log path for strategy auto-switch engine |
-| `menu-ops.audit-db-enabled` | boolean | `true` | Enable SQLite persistence for MenuOps job audit records |
-| `menu-ops.audit-db-path` | string | `./logs/menu-ops-audit.db` | SQLite file path for MenuOps audit records |
-| `menu-ops.audit-db-retention-days` | int | `90` | Retention days for MenuOps audit cleanup |
-| `menu-ops.audit-db-max-rows` | int | `200000` | Max retained MenuOps audit rows after cleanup |
-| `menu-ops.diagnostics-dir` | string | `./logs/diagnostics` | Directory for persisted WARP diagnostics bundles |
-| `menu-ops.diagnostics-retention-days` | int | `14` | Retention in days for diagnostics cleanup policy (`0` means disabled) |
-| `menu-ops.diagnostics-max-files` | int | `300` | Max diagnostics files to keep (`0` means unlimited) |
-| `menu-ops.diagnostics-max-download-bytes` | int | `52428800` | Max per-file download size allowed by diagnostics API (`0` means unlimited) |
-| `menu-ops.auto-switch-endpoints` | string | `engage.cloudflareclient.com:2408,162.159.192.1:2408,162.159.193.1:2408` | Endpoint candidates for auto-switch attempts |
-| `menu-ops.auto-switch-stacks` | string | `d,4,6` | Stack candidates for auto-switch attempts (`d`/`4`/`6`) |
-
-## 6. Management APIs
+### 运行时控制 API
 
 - `GET /api/v1/runtime/status`
+- `GET /api/v1/runtime/self-check`
 - `POST /api/v1/runtime/start`
 - `POST /api/v1/runtime/stop`
 - `POST /api/v1/runtime/restart`
 - `POST /api/v1/runtime/reload`
+
+### 指标 API
+
 - `GET /api/v1/metrics/overview`
+
+### 代理探测 API
+
 - `POST /api/v1/tools/proxy-test`
 - `POST /api/v1/tools/scenario-test`
-- `GET /api/v1/tools/warp-runtime-status?refresh=false`
-- `GET /api/v1/tools/warp-runtime-history?limit=120`
-- `GET /api/v1/tools/warp-runtime-history/summary?minutes=60`
-- `GET /api/v1/tools/warp-alerts?limit=120`
-- `GET /api/v1/tools/warp-alerts/active?limit=20`
-- `GET /api/v1/tools/warp-alerts/summary?minutes=60`
-- `GET /api/v1/tools/warp-alert-rules`
-- `PUT /api/v1/tools/warp-alert-rules`
-- `POST /api/v1/tools/warp-alert-rules/reset`
-- `GET /api/v1/menu-ops/catalog`
-- `GET /api/v1/menu-ops/jobs?limit=40`
-- `GET /api/v1/menu-ops/jobs/delta?limit=40&since=<epochMillis>`
-- `GET /api/v1/menu-ops/jobs/{jobId}?includeLogs=true&tail=500`
-- `GET /api/v1/menu-ops/jobs/{jobId}/logs.txt?tail=3000`
-- `GET /api/v1/menu-ops/audit?limit=120`
-- `GET /api/v1/menu-ops/audit/summary?minutes=240`
-- `GET /api/v1/menu-ops/diagnostics?limit=80`
+
+场景探测当前内置目标包括：
+
+- `CHATGPT`
+- `NETFLIX`
+- `GOOGLE_SCHOLAR`
+- `TELEGRAM`
+- `IPV4_EGRESS`
+
+### 当前可用的 MenuOps 相关接口
+
+- `GET /api/v1/menu-ops/diagnostics`
 - `GET /api/v1/menu-ops/diagnostics/summary`
 - `GET /api/v1/menu-ops/diagnostics/{fileName}`
 - `DELETE /api/v1/menu-ops/diagnostics/{fileName}`
+- `GET /api/v1/menu-ops/audit`
+- `GET /api/v1/menu-ops/audit/summary`
+
+### 已暴露但暂未完整实现的接口
+
+以下接口在控制器中已存在，但当前 `MenuOpsService` 为简化实现，调用结果可能为空或直接返回不支持：
+
+- `GET /api/v1/menu-ops/catalog`
+- `GET /api/v1/menu-ops/jobs`
+- `GET /api/v1/menu-ops/jobs/delta`
+- `GET /api/v1/menu-ops/jobs/{jobId}`
+- `GET /api/v1/menu-ops/jobs/{jobId}/logs.txt`
 - `POST /api/v1/menu-ops/jobs`
 - `POST /api/v1/menu-ops/jobs/{jobId}/cancel`
 
-Query options:
+如果你打算继续开发这部分，建议从 `src/main/java/com/zqzqq/proxyhub/management/service/MenuOpsService.java` 开始补齐实际执行逻辑。
 
-- `GET /api/v1/tools/warp-runtime-status`
-  - `refresh=true` forces real-time probing and bypasses cache.
-  - Response includes structured WARP+ fields:
-    - `warpTraceState` (`on` / `plus` / `off` / `-`)
-    - `warpPlusAccount` (whether current account is Plus/Teams)
-    - `warpPlusVerified` (connected + trace active + Plus/Teams account)
-    - `connectivityPhase` / `connectivityReason` (parsed from `warp-cli -l status`)
-    - `pmtudEnabled` / `pmtudStatus` (parsed from current WARP settings output)
-    - `firewallPrecheckPass` / `firewallTcpStatus` / `firewallUdpStatus` (required edge-port precheck summary)
-- `GET /api/v1/tools/warp-runtime-history`
-  - Returns recent WARP runtime snapshots persisted in SQLite.
-  - `limit` controls returned records.
-- `GET /api/v1/tools/warp-runtime-history/summary`
-  - Returns aggregated summary for a time window.
-  - `minutes` controls summary window (default `60`).
-- `GET /api/v1/tools/warp-alerts`
-  - Returns recent WARP alert events from SQLite.
-  - `limit` controls returned events.
-- `GET /api/v1/tools/warp-alerts/active`
-  - Returns current active alerts (latest state per alert code where active=1).
-  - `limit` controls returned active alerts.
-- `GET /api/v1/tools/warp-alerts/summary`
-  - Returns alert aggregate metrics for a time window.
-  - `minutes` controls summary window (default `60`).
-- `GET /api/v1/tools/warp-alert-rules`
-  - Returns current WARP alert rule config list (`alertCode`, `title`, `severity`, `enabled`, `updatedAt`).
-- `PUT /api/v1/tools/warp-alert-rules`
-  - Upserts one or more rule configs (`alertCode`, `severity`, `enabled`).
-  - Returns full refreshed rule config list.
-- `POST /api/v1/tools/warp-alert-rules/reset`
-  - Resets all rule configs to built-in defaults and returns the full rule list.
-- `GET /api/v1/menu-ops/jobs`
-  - `limit` controls returned job count (default `40`, max clamped by `menu-ops.max-history`).
-  - `since` (epoch millis) returns jobs updated after the specified timestamp for incremental polling.
-- `GET /api/v1/menu-ops/jobs/delta`
-  - Returns envelope with `serverNowEpochMillis`, `nextSinceEpochMillis`, `returnedCount`, and `items`.
-  - `nextSinceEpochMillis` can be used as cursor for the next incremental request.
-  - `compact=true` returns lightweight items (empty `commandLine/argument/logs`) for low-bandwidth polling.
-- `GET /api/v1/menu-ops/jobs/{jobId}`
-  - `includeLogs=true/false` controls whether logs are included.
-  - `tail` can limit returned log lines (for example `tail=500`) to reduce payload size.
-- `GET /api/v1/menu-ops/jobs/{jobId}/logs.txt`
-  - Download text export of a job (metadata + logs).
-  - `tail` can limit exported log lines.
-- `GET /api/v1/menu-ops/audit`
-  - Returns MenuOps audit records persisted in SQLite.
-  - `limit` controls returned rows.
-- `GET /api/v1/menu-ops/audit/summary`
-  - Returns MenuOps audit aggregate metrics for a time window.
-  - `minutes` controls summary window (default `240`).
-- `GET /api/v1/menu-ops/diagnostics`
-  - List diagnostics files under `menu-ops.diagnostics-dir`.
-  - `limit` controls returned file count.
-- `GET /api/v1/menu-ops/diagnostics/summary`
-  - Returns diagnostics directory summary: file count, total bytes, latest modified timestamp, and retention policy values.
-- `GET /api/v1/menu-ops/diagnostics/{fileName}`
-  - Download one diagnostics file (enforced by `menu-ops.diagnostics-max-download-bytes`).
-- `DELETE /api/v1/menu-ops/diagnostics/{fileName}`
-  - Delete one diagnostics file.
+## 使用示例
 
-When `proxy.management.enabled=true`, protected endpoints require one of:
+### 1. 验证 SOCKS5 代理
 
-- Basic auth (`Authorization: Basic ...`)
-- Token auth (`X-ProxyHub-Token: <token>`) if enabled
-- If both auth methods are disabled, at least one `proxy.management.allow-cidrs` rule must be configured (CIDR-only mode)
+无认证：
 
-Proxy probe request example:
+```bash
+curl --proxy socks5h://127.0.0.1:1080 https://httpbin.org/ip
+```
+
+带认证：
+
+```bash
+curl --proxy socks5h://user:pass@127.0.0.1:1080 https://httpbin.org/ip
+```
+
+### 2. 验证 HTTP 代理
+
+无认证：
+
+```bash
+curl -x http://127.0.0.1:8080 http://httpbin.org/get
+```
+
+带认证：
+
+```bash
+curl -x http://user:pass@127.0.0.1:8080 http://httpbin.org/get
+```
+
+### 3. 验证 HTTPS CONNECT 隧道
+
+```bash
+curl -x http://127.0.0.1:8080 https://httpbin.org/ip
+```
+
+### 4. 调用代理探测接口
 
 ```json
 {
@@ -379,350 +414,92 @@ Proxy probe request example:
   "targetUrl": "https://httpbin.org/ip",
   "proxyHost": "127.0.0.1",
   "proxyPort": 1080,
-  "username": "optional_user",
-  "password": "optional_pass",
+  "username": null,
+  "password": null,
   "timeoutMillis": 8000
 }
 ```
 
-Scenario probe request example:
+### 5. 调用场景探测接口
 
 ```json
 {
-  "mode": "SOCKS5",
+  "mode": "HTTP",
   "proxyHost": "127.0.0.1",
-  "proxyPort": 1080,
+  "proxyPort": 8080,
   "username": null,
   "password": null,
   "timeoutMillis": 8000,
   "scenarios": [
     "CHATGPT",
     "NETFLIX",
-    "GOOGLE_SCHOLAR",
-    "TELEGRAM",
-    "IPV4_EGRESS"
+    "GOOGLE_SCHOLAR"
   ]
 }
 ```
 
-MenuOps request example:
+## Linux 部署与发布
 
-```json
-{
-  "operationId": "SHOW_STATUS",
-  "argument": null,
-  "stdin": null,
-  "confirmRisk": false
-}
-```
-
-WARP alert rule update example:
-
-```json
-{
-  "rules": [
-    {
-      "alertCode": "WARP_FIREWALL_BLOCKED",
-      "severity": "CRITICAL",
-      "enabled": true
-    },
-    {
-      "alertCode": "WARP_GOOGLE_PROBE_FAILED",
-      "severity": "LOW",
-      "enabled": false
-    }
-  ]
-}
-```
-
-High-risk example:
-
-```json
-{
-  "operationId": "UNINSTALL_ALL",
-  "confirmRisk": true
-}
-```
-
-MenuOps design note:
-
-- MenuOps in this project is Java-native orchestration (operation handlers + async jobs).
-- It maps the menu capability set into Java operations and does not execute local `menu.sh` as runtime entrypoint.
-- In addition to menu option parity, MenuOps also provides extra WARP operations:
-  - `SHOW_WARP_ACCOUNT`
-  - `VERIFY_WARP_PLUS`
-  - `REREGISTER_WARP_ACCOUNT`
-  - `SET_WARP_LICENSE`
-  - `SET_WARP_TEAMS_ACCOUNT`
-  - `LEAVE_WARP_TEAMS_ACCOUNT`
-  - `SET_WARP_ACCOUNT_MODE`
-  - `SET_CLIENT_MODE`
-  - `SET_PMTUD_MODE`
-  - `WARP_FIREWALL_PRECHECK`
-  - `COLLECT_WARP_DIAGNOSTICS`
-  - `CLEANUP_DIAGNOSTICS`
-  - `START_WARP_PLUS`
-  - `STOP_WARP_PLUS`
-  - `REPAIR_WARP_NETWORK`
-  - `TUNE_WARP_MTU`
-  - `SET_WARP_ENDPOINT`
-  - `APPLY_WARP_PROFILE`
-  - `AUTO_RECOVER_WARP`
-  - `CHECK_SCENARIO_REACHABILITY`
-  - `AUTO_SWITCH_POLICY`
-- `INSTALL_IPTABLES_STREAM` now includes policy-route domains for:
-  - ChatGPT / OpenAI
-  - Netflix
-  - Google / Google Scholar
-  - Telegram
-
-Profile operation (`APPLY_WARP_PROFILE`) argument examples:
-
-- `chatgpt`
-- `google`
-- `telegram`
-- `netflix:hk`
-- `full`
-
-WARP+ and Teams operations:
-
-- `START_WARP_PLUS`: explicit connect + connectivity verify
-- `STOP_WARP_PLUS`: explicit disconnect
-- `VERIFY_WARP_PLUS`: verify connected state + account tier + trace (`warp=on/plus`)
-- `SET_CLIENT_MODE`: switch client mode without reinstall (`warp` / `proxy` / `proxy:40000`)
-- `SET_PMTUD_MODE`: best-effort PMTUD toggle (`on` / `off`) depending on current warp-cli version
-- `WARP_FIREWALL_PRECHECK`: precheck required Cloudflare WARP edge ports (`443,500,1701,4500,4443,8443,8095`)
-- `SET_WARP_TEAMS_ACCOUNT` argument examples:
-  - team organization name
-  - team domain
-  - team enrollment token
-- `LEAVE_WARP_TEAMS_ACCOUNT`: leave/unenroll current teams account
-- `SET_WARP_ACCOUNT_MODE`: account quick switch:
-  - `free`
-  - `plus:<license>`
-  - `teams:<organization/domain/token>`
-  - `teams-leave`
-- `COLLECT_WARP_DIAGNOSTICS`: collect service + warp-cli + route + trace diagnostics in one job log
-- `CLEANUP_DIAGNOSTICS`: cleanup diagnostics files by `diagnostics-retention-days` and `diagnostics-max-files` policy
-
-Auto-switch engine operation (`AUTO_SWITCH_POLICY`) argument examples:
-
-- `auto`
-- `chatgpt`
-- `netflix:hk`
-- `google`
-- `telegram`
-- `full`
-
-Auto-switch engine behavior:
-
-- Iterates candidates from `menu-ops.auto-switch-endpoints` and `menu-ops.auto-switch-stacks`.
-- Evaluates scenario reachability score for selected profile.
-- Selects best combination and reapplies it as final runtime config.
-- Writes persistent audit records to `menu-ops.audit-log-path`.
-
-Dashboard built-in probe panel:
-
-- Open `/dashboard`, go to `Proxy Connectivity Test`.
-- Choose mode (`SOCKS5` or `HTTP`), set target URL, and optional credentials.
-- Click `Fill Current Config` to auto-populate proxy host/port from listener settings.
-- Click `Run Proxy Test` to execute probe.
-- Click `Run Scenario Test` to batch-check `CHATGPT / NETFLIX / GOOGLE_SCHOLAR / TELEGRAM / IPV4_EGRESS`.
-- Results are shown inline, and the latest 20 probe records are kept in panel history.
-
-Dashboard WARP operations panel:
-
-- Open `/dashboard`, go to `WARP 运行态与账户`.
-- Runtime card shows:
-  - `warp-cli` installed state
-  - `warp-svc` service state
-  - current connectivity phase/reason from `warp-cli -l status`
-  - WARP connected/disconnected state
-  - PMTUD effective state (parsed from warp settings)
-  - firewall precheck summary (TCP/UDP required port probes)
-  - account type / mode / tunnel protocol / teams organization
-  - Cloudflare trace state (`warp=on/plus/off`)
-  - WARP+ account detection and verification state
-  - public IPv4 / public IPv6 / Google reachability probe
-- WARP history sub-panel:
-  - SQLite persisted runtime snapshots
-  - recent timeline table (connected/phase/firewall/PMTUD/IP)
-  - window summary metrics for quick stability diagnosis
-- Quick actions are mapped to MenuOps jobs:
-  - `TOGGLE_WARP`
-  - `START_WARP_PLUS`
-  - `STOP_WARP_PLUS`
-  - `TOGGLE_CLIENT` (`warp r` equivalent)
-  - `SET_WARP_ACCOUNT_MODE` (`free` / `plus:<license>` / `teams:<account>` / `teams-leave`)
-  - `SET_CLIENT_MODE` (`warp` / `proxy[:port]`)
-  - `INSTALL_CLIENT_WARP`
-  - `INSTALL_CLIENT_PROXY`
-  - `REPAIR_WARP_NETWORK`
-  - `TUNE_WARP_MTU`
-  - `SET_STACK_PRIORITY`
-  - `SET_WARP_ENDPOINT`
-  - `SHOW_WARP_ACCOUNT`
-  - `VERIFY_WARP_PLUS`
-  - `SET_PMTUD_MODE`
-  - `WARP_FIREWALL_PRECHECK`
-  - `COLLECT_WARP_DIAGNOSTICS`
-  - `CLEANUP_DIAGNOSTICS`
-  - `SET_WARP_LICENSE`
-  - `REREGISTER_WARP_ACCOUNT`
-  - `APPLY_WARP_PROFILE`
-  - `AUTO_RECOVER_WARP`
-  - `AUTO_SWITCH_POLICY`
-  - `SET_WARP_TEAMS_ACCOUNT`
-  - `LEAVE_WARP_TEAMS_ACCOUNT`
-- Diagnostics files panel (MenuOps area):
-  - List persisted diagnostics bundles.
-  - View diagnostics summary (count/bytes/latest + retention policy).
-  - One-click download / delete per file.
-  - One-click cleanup by retention policy.
-  - Supports auto-refresh and manual refresh.
-
-Probe troubleshooting (`SOCKS5 connect failed: RULESET_BLOCKED`):
-
-- If ACL is enabled and you run probe from dashboard, add loopback CIDR:
-  - `proxy.acl.allow-client-cidrs` includes `127.0.0.1/32`
-- Ensure target port is not denied by `proxy.acl.deny-target-ports`
-- If per-client quota is enabled, check `proxy.performance.max-connections-per-client`
-
-WARP client troubleshooting (`INSTALL_CLIENT_WARP` stuck at `Connecting`):
-
-- Ensure outbound traffic to Cloudflare WARP endpoints is allowed:
-  - IP example from runtime logs: `162.159.198.2`
-  - Ports used by WARP runtime: `443,500,1701,4500,4443,8443,8095` (UDP/TCP as required)
-- Verify cloud security group and host firewall (`iptables/nftables/firewalld`) are not blocking these ports.
-- If IPv6 is unavailable, this is acceptable; WARP should still connect via IPv4.
-- MenuOps now auto-attempts tunnel-protocol fallback (`WireGuard`/`MASQUE`) during connect retries.
-- If protocol fallback still fails, MenuOps additionally tries endpoint candidates from `menu-ops.auto-switch-endpoints`.
-- `START_WARP_PLUS` also uses the same resilient connect chain (daemon recovery + registration repair + protocol/endpoint fallback).
-
-Actuator endpoints (default):
-
-- `/actuator/health`
-- `/actuator/info`
-- `/actuator/metrics`
-- `/actuator/prometheus`
-
-## 7. Proxy verification examples
-
-### 7.1 SOCKS5
-
-No auth:
+### 1. 直接使用脚本启动
 
 ```bash
-curl --proxy socks5h://127.0.0.1:1080 https://httpbin.org/ip
+chmod +x bin/*.sh
+bin/start.sh
+bin/status.sh
+bin/stop.sh
 ```
 
-With auth:
+`bin/start.sh` 的默认行为：
+
+- 从 `target/` 中寻找可执行 Jar
+- 使用 `conf/application-prod.yml` 作为外部配置
+- 生成 PID 文件到 `run/proxy-hub.pid`
+- 控制台日志输出到 `logs/console.out`
+- 默认 JVM 参数为 `-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError`
+
+### 2. CentOS7 发布包
+
+Linux 下打包：
 
 ```bash
-curl --proxy socks5h://user:pass@127.0.0.1:1080 https://httpbin.org/ip
-```
-
-### 7.2 HTTP proxy
-
-No auth:
-
-```bash
-curl -x http://127.0.0.1:8080 http://httpbin.org/get
-```
-
-With basic auth:
-
-```bash
-curl -x http://user:pass@127.0.0.1:8080 http://httpbin.org/get
-```
-
-### 7.3 HTTPS through CONNECT tunnel
-
-```bash
-curl -x http://127.0.0.1:8080 https://httpbin.org/ip
-```
-
-## 8. Production hardening checklist
-
-- Enable auth on both listeners:
-  - `proxy.socks.auth.enabled=true`
-  - `proxy.http.auth.enabled=true`
-- Enable ACL and define strict `allow-client-cidrs`
-- Restrict inbound firewall to trusted source IPs only
-- Put management port behind internal network or reverse proxy auth
-- Rotate credentials and avoid default passwords
-- Export actuator metrics to Prometheus/Grafana
-- Set proper JVM options (`JAVA_OPTS`) and log retention policy
-
-## 9. Current capability boundaries
-
-- HTTPS is supported as CONNECT tunnel passthrough only (no MITM TLS decrypt)
-- SOCKS5 currently supports CONNECT command
-- CIDR matcher currently handles IPv4 CIDR rules
-
-## 10. Release packaging for CentOS7
-
-Build and package in Windows (PowerShell):
-
-```powershell
-cd C:\usersoft\sockets
-.\bin\build-release.ps1
-```
-
-Build and package in Linux:
-
-```bash
-cd /opt/proxy-hub-source
 chmod +x bin/build-release.sh
 bin/build-release.sh
 ```
 
-Skip build stage if jar already exists:
-
-```powershell
-.\bin\build-release.ps1 -SkipBuild
-```
+跳过构建阶段：
 
 ```bash
 bin/build-release.sh --skip-build
 ```
 
-Output:
+输出文件：
 
-- `dist/proxy-hub-<version>-centos7.tar.gz`
-
-## 11. Release packaging for Ubuntu
-
-Build and package in Windows (PowerShell):
-
-```powershell
-cd C:\usersoft\sockets
-.\bin\build-release-ubuntu.ps1
+```text
+dist/proxy-hub-<version>-centos7.tar.gz
 ```
 
-Build and package in Linux:
+### 3. Ubuntu 发布包
+
+Linux 下打包：
 
 ```bash
-cd /opt/proxy-hub-source
 chmod +x bin/build-release-ubuntu.sh
 bin/build-release-ubuntu.sh
 ```
 
-Skip build stage if jar already exists:
-
-```powershell
-.\bin\build-release-ubuntu.ps1 -SkipBuild
-```
+跳过构建阶段：
 
 ```bash
 bin/build-release-ubuntu.sh --skip-build
 ```
 
-Output:
+输出文件：
 
-- `dist/proxy-hub-<version>-ubuntu.tar.gz`
+```text
+dist/proxy-hub-<version>-ubuntu.tar.gz
+```
 
-Ubuntu package production install:
+### 4. Ubuntu 安装脚本
 
 ```bash
 tar -xzf proxy-hub-<version>-ubuntu.tar.gz -C /opt
@@ -731,3 +508,41 @@ chmod +x bin/*.sh
 sudo bash bin/install-ubuntu.sh
 ```
 
+安装脚本会：
+
+- 创建 `proxyhub` 系统用户和用户组
+- 安装 `proxy-hub.service`
+- 创建 `/opt/proxy-hub` 软链接
+- 启用 systemd 服务
+
+## 生产环境建议
+
+- 不要使用默认账号密码
+- 对 SOCKS5 和 HTTP 监听都开启认证
+- 开启 ACL，限制允许访问代理的客户端网段
+- 将管理端口仅暴露给可信网络
+- 如启用管理 Basic Auth，请使用强密码
+- 如果使用 `squid` 模式，请确认可执行文件、日志目录、配置目录权限正确
+- 配置 JVM 内存和日志留存策略
+- 使用 `/api/v1/runtime/self-check` 和 `/api/v1/metrics/overview` 做日常巡检
+
+## 已知限制
+
+- SOCKS5 当前只支持 `CONNECT`
+- HTTPS 仅支持 `CONNECT` 隧道透传，不支持 TLS 中间人解密
+- ACL 的客户端 CIDR 匹配当前以 IPv4 规则为主
+- 默认配置下 HTTP 引擎为 `squid`，本地环境若未安装 Squid 需手动切换到 `legacy`
+- MenuOps 作业中心和 WARP 自动化能力在当前版本中尚未完整落地
+
+## 开发建议
+
+如果你准备继续扩展这个项目，建议优先关注以下几个方向：
+
+1. 完成 `MenuOpsService` 的真实作业执行链路
+2. 为 Squid 模式补齐 HTTP 认证对接
+3. 明确 WARP 相关功能的服务端能力边界，并与前端脚本保持一致
+4. 为 README 中仍然属于“预留”的模块补齐自动化测试
+
+## 许可证
+
+本项目采用 [LICENSE](./LICENSE) 中声明的许可证。
