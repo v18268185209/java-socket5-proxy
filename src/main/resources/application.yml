@@ -1,0 +1,114 @@
+spring:
+  application:
+    name: proxy-hub
+  thymeleaf:
+    cache: false
+server:
+  port: 9090
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+proxy:
+  socks:
+    name: SOCKS5
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 1080
+    auth:
+      enabled: false
+      username: admin
+      password: admin
+  http:
+    name: HTTP
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 8080
+    engine: squid
+    # squid legacy
+    auth:
+      enabled: false
+      username: admin
+      password: admin
+    squid:
+      executable: squid
+      config-path: ./conf/squid/squid.conf
+      workdir: .
+      access-log-path: ./logs/squid/access.log
+      manage-config: true
+      foreground: true
+      extra-args: []
+  acl:
+    enabled: false
+    allow-client-cidrs: []
+    deny-target-hosts:
+      - localhost
+      - "*.internal.local"
+    deny-target-ports:
+      - 25
+      - 3306
+      - 6379
+  performance:
+    connect-timeout-millis: 10000
+    idle-timeout-seconds: 120
+    boss-threads: 1
+    worker-threads: 0
+    backlog: 1024
+    max-connections-per-client: 0
+    recv-byte-buf-min: 1024
+    recv-byte-buf-initial: 8192
+    recv-byte-buf-max: 65536
+    write-buffer-low-water-mark: 32768
+    write-buffer-high-water-mark: 131072
+    prefer-native-transport: true
+    http-pending-request-max-bytes: 1048576
+  dashboard:
+    refresh-seconds: 2
+    max-recent-events: 3000
+    timezone: Asia/Shanghai
+    record-session-lifecycle-events: false
+  management:
+    enabled: false
+    protect-actuator: false
+    allow-cidrs: []
+    allow-basic-auth: true
+    allow-token-auth: false
+    access-token: ""
+    basic:
+      enabled: true
+      username: admin
+      password: admin
+
+logging:
+  level:
+    root: INFO
+    com.zqzqq.proxyhub: INFO
+
+menu-ops:
+  enabled: true
+  bash-path: /bin/bash
+  workdir: .
+  timeout-seconds: 3600
+  max-log-lines: 3000
+  max-history: 100
+  max-concurrency: 4
+  allow-raw-args: true
+  allow-destructive: false
+  allow-remote-scripts: false
+  audit-log-path: /var/log/proxy-hub/strategy-audit.log
+  audit-db-enabled: true
+  audit-db-path: ./logs/menu-ops-audit.db
+  audit-db-retention-days: 90
+  audit-db-max-rows: 200000
+  diagnostics-dir: ./logs/diagnostics
+  diagnostics-retention-days: 14
+  diagnostics-max-files: 300
+  diagnostics-max-download-bytes: 52428800
+  auto-switch-endpoints: engage.cloudflareclient.com:2408,162.159.192.1:2408,162.159.193.1:2408
+  auto-switch-stacks: d,4,6

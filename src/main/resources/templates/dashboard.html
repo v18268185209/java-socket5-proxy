@@ -1,0 +1,407 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title id="pageTitle">Proxy Hub Console</title>
+    <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+<div class="bg-orb bg-orb-a"></div>
+<div class="bg-orb bg-orb-b"></div>
+
+<main class="shell">
+    <section class="panel hero" data-animate>
+        <div class="hero-main">
+            <p class="eyebrow" id="heroEyebrow">Proxy Hub Control Plane</p>
+            <h1 id="heroTitle">Enterprise Proxy Operations Console</h1>
+            <p class="hero-desc">
+                <span id="socksPortLabel">SOCKS5 Port</span> <strong th:text="${socksPort}"></strong>
+                <span class="sep-dot"></span>
+                <span id="httpPortLabel">HTTP/HTTPS Port</span> <strong th:text="${httpPort}"></strong>
+            </p>
+            <div class="runtime-line">
+                <span id="runtimeState" class="state-pill state-loading">LOADING</span>
+                <span id="runtimeMeta" class="runtime-meta">refreshing...</span>
+            </div>
+        </div>
+        <div class="hero-actions">
+            <button id="btnStart" class="action-btn">Start</button>
+            <button id="btnStop" class="action-btn action-warn">Stop</button>
+            <button id="btnRestart" class="action-btn action-neutral">Restart</button>
+        </div>
+    </section>
+
+    <section class="metrics-grid" id="metricsCards" data-animate>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelActive">Active Connections</span>
+            <span id="mActive" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelTotal">Total Connections</span>
+            <span id="mTotal" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelBlocked">Blocked Requests</span>
+            <span id="mBlocked" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelAuthFail">Auth Failures</span>
+            <span id="mAuthFail" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelConnectFail">Connect Failures</span>
+            <span id="mConnectFail" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelIngress">Ingress Traffic</span>
+            <span id="mInBytes" class="metric-value">0</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label" id="metricLabelEgress">Egress Traffic</span>
+            <span id="mOutBytes" class="metric-value">0</span>
+        </article>
+    </section>
+
+    <section class="split" data-animate>
+        <article class="panel">
+            <div class="panel-head">
+                <h2 id="selfCheckTitle">Runtime Self Check</h2>
+                <span class="panel-sub" id="selfCheckSub">配置来源、监听器、ACL/Auth、外部 HTTP 引擎与失败 TopN</span>
+            </div>
+            <div class="self-check-wrap">
+                <div id="selfCheckGrid" class="self-check-grid">
+                    <div class="empty-tip">加载中...</div>
+                </div>
+                <div class="self-check-block">
+                    <div class="panel-head compact">
+                        <h2 id="selfCheckConfigTitle">Config Sources</h2>
+                        <span class="panel-sub" id="selfCheckConfigSub">当前生效的配置来源</span>
+                    </div>
+                    <div id="selfCheckConfigSources" class="self-check-list empty-tip">加载中...</div>
+                </div>
+                <div class="self-check-block">
+                    <div class="panel-head compact">
+                        <h2 id="selfCheckTopFailuresTitle">Top Failure Reasons</h2>
+                        <span class="panel-sub" id="selfCheckTopFailuresSub">最近失败原因 TopN</span>
+                    </div>
+                    <div id="selfCheckTopFailures" class="self-check-list empty-tip">暂无失败原因</div>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2 id="failureReasonsTitle">Failure Reasons</h2>
+                <span class="panel-sub" id="failureReasonsSub">排障时优先看的失败原因计数</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th id="thFailureReason">Reason</th>
+                        <th id="thFailureCount">Count</th>
+                    </tr>
+                    </thead>
+                    <tbody id="failureReasonsBody">
+                    <tr>
+                        <td colspan="2" class="empty-tip">暂无失败原因</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </article>
+    </section>
+
+    <section class="panel" data-animate>
+        <div class="panel-head">
+            <h2 id="protocolTitle">Protocol Distribution</h2>
+            <span class="panel-sub" id="protocolSub">SOCKS5 / HTTP / HTTPS CONNECT</span>
+        </div>
+        <div class="chart-box">
+            <canvas id="protocolChart" width="920" height="280"></canvas>
+        </div>
+    </section>
+
+    <section class="panel" data-animate>
+        <div class="panel-head">
+            <h2 id="probeTitle">Proxy Connectivity Test</h2>
+            <span class="panel-sub" id="probeSub">SOCKS5 and HTTP proxy probe</span>
+        </div>
+        <div class="probe-wrap">
+            <div class="probe-grid">
+                <label class="field">
+                    <span id="labelTestMode">Test Mode</span>
+                    <select id="testMode">
+                        <option value="SOCKS5" id="optSocks5">SOCKS5 Proxy</option>
+                        <option value="HTTP" id="optHttp">HTTP Proxy</option>
+                    </select>
+                </label>
+                <label class="field field-wide">
+                    <span id="labelTargetUrl">Target URL</span>
+                    <input id="testTargetUrl" type="text" value="https://httpbin.org/ip" placeholder="example: https://httpbin.org/ip">
+                </label>
+                <label class="field">
+                    <span id="labelProxyHost">Proxy Host (optional)</span>
+                    <input id="testProxyHost" type="text" placeholder="empty = current listener config">
+                </label>
+                <label class="field">
+                    <span id="labelProxyPort">Proxy Port (optional)</span>
+                    <input id="testProxyPort" type="number" min="1" max="65535" placeholder="empty = current listener config">
+                </label>
+                <label class="field">
+                    <span id="labelUsername">Username (optional)</span>
+                    <input id="testUsername" type="text" placeholder="fill if required">
+                </label>
+                <label class="field">
+                    <span id="labelPassword">Password (optional)</span>
+                    <input id="testPassword" type="password" placeholder="fill if required">
+                </label>
+                <label class="field">
+                    <span id="labelTimeout">Timeout Milliseconds</span>
+                    <input id="testTimeout" type="number" min="1000" max="60000" value="8000">
+                </label>
+            </div>
+            <div class="probe-actions">
+                <button id="btnRunProxyTest" class="action-btn">Run Proxy Test</button>
+                <button id="btnRunScenarioTest" class="action-btn action-neutral">Run Scenario Test</button>
+                <button id="btnFillProxyConfig" class="action-btn action-neutral">Fill Current Config</button>
+                <span class="probe-tip" id="probeTip">Recommended: test SOCKS5 first, then HTTP/HTTPS.</span>
+            </div>
+            <div id="testResultBox" class="test-result empty-tip">No probe executed</div>
+            <div class="scenario-wrap">
+                <span class="scenario-title" id="scenarioTitle">Scenario Test Matrix</span>
+                <div class="scenario-tags">
+                    <label><input type="checkbox" class="scenario-item" value="CHATGPT" checked> ChatGPT</label>
+                    <label><input type="checkbox" class="scenario-item" value="NETFLIX" checked> Netflix</label>
+                    <label><input type="checkbox" class="scenario-item" value="GOOGLE_SCHOLAR" checked> Google Scholar</label>
+                    <label><input type="checkbox" class="scenario-item" value="TELEGRAM" checked> Telegram</label>
+                    <label><input type="checkbox" class="scenario-item" value="IPV4_EGRESS" checked> IPv4 Egress</label>
+                </div>
+                <div id="scenarioResultBox" class="test-result empty-tip">No scenario test executed</div>
+            </div>
+            <div class="probe-history">
+                <div class="panel-head compact">
+                    <h2 id="probeHistoryTitle">Probe History</h2>
+                    <span class="panel-sub" id="probeHistorySub">Latest 20 records</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th id="thProbeTime">Time</th>
+                            <th id="thProbeMode">Mode</th>
+                            <th id="thProbeStatus">Result</th>
+                            <th id="thProbeTarget">Target</th>
+                            <th id="thProbeProxy">Proxy</th>
+                            <th id="thProbeCost">Cost</th>
+                        </tr>
+                        </thead>
+                        <tbody id="probeHistoryBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel ops-panel" data-animate>
+        <div class="panel-head">
+            <h2 id="menuOpsTitle">Menu 运维作业中心</h2>
+            <span class="panel-sub" id="menuOpsSub">Java 原生实现，覆盖 menu.sh 运维能力集</span>
+        </div>
+        <div class="ops-layout">
+            <article class="ops-form">
+                <div class="ops-grid">
+                    <label class="field field-wide">
+                        <span id="menuOpLabel">操作类型</span>
+                        <select id="menuOpSelect"></select>
+                    </label>
+                    <label class="field">
+                        <span id="menuOpRiskLabel">风险等级</span>
+                        <input id="menuOpRisk" type="text" readonly>
+                    </label>
+                    <label class="field">
+                        <span id="menuOpTokenLabel">兼容选项</span>
+                        <input id="menuOpToken" type="text" readonly>
+                    </label>
+                    <label class="field field-wide">
+                        <span id="menuOpArgLabel">参数（可选）</span>
+                        <input id="menuOpArg" type="text" placeholder="例如：hk / 4 / 11">
+                    </label>
+                    <label class="field field-wide">
+                        <span id="menuOpStdinLabel">输入流（可选）</span>
+                        <textarea id="menuOpStdin" rows="4" placeholder="逐行输入 MENU_INTERACTIVE 的菜单编号，例如：&#10;1&#10;0"></textarea>
+                    </label>
+                </div>
+                <label class="confirm-line">
+                    <input id="menuOpConfirm" type="checkbox">
+                    <span id="menuOpConfirmText">我确认执行高风险操作</span>
+                </label>
+                <div class="probe-actions">
+                    <button id="btnMenuOpRun" class="action-btn">提交作业</button>
+                    <button id="btnMenuOpCancel" class="action-btn action-warn">取消当前作业</button>
+                    <button id="btnMenuOpDownload" class="action-btn action-neutral">下载作业日志</button>
+                    <button id="btnMenuOpRefresh" class="action-btn action-neutral">刷新作业列表</button>
+                </div>
+                <div id="menuOpHint" class="test-result empty-tip">尚未选择运维操作</div>
+            </article>
+
+            <article class="ops-jobs">
+                <div class="panel-head compact">
+                    <h2 id="menuJobTitle">作业历史</h2>
+                    <span class="panel-sub" id="menuJobSub">最近执行记录</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th id="thMenuJobTime">时间</th>
+                            <th id="thMenuJobOp">操作</th>
+                            <th id="thMenuJobStatus">状态</th>
+                            <th id="thMenuJobCost">耗时</th>
+                        </tr>
+                        </thead>
+                        <tbody id="menuJobBody"></tbody>
+                    </table>
+                </div>
+                <div class="ops-log-wrap">
+                    <div class="ops-log-head">
+                        <strong id="menuLogTitle">作业日志</strong>
+                        <span id="menuLogMeta">未选择作业</span>
+                    </div>
+                    <pre id="menuJobLogs" class="ops-log">-</pre>
+                </div>
+                <div class="diag-file-wrap">
+                    <div class="panel-head compact">
+                        <h2 id="diagTitle">诊断文件</h2>
+                        <span class="panel-sub" id="diagSub">代理诊断包历史列表</span>
+                    </div>
+                    <div class="probe-actions diag-actions">
+                        <button id="btnDiagRefresh" class="action-btn action-neutral">刷新诊断文件</button>
+                        <button id="btnDiagCleanup" class="action-btn action-neutral">按策略清理诊断文件</button>
+                    </div>
+                    <div id="diagSummary" class="diag-summary empty-tip">诊断目录汇总加载中...</div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th id="thDiagName">文件名</th>
+                                <th id="thDiagSize">大小</th>
+                                <th id="thDiagTime">更新时间</th>
+                                <th id="thDiagAction">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="diagFileBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="diagHint" class="test-result empty-tip">暂无诊断文件</div>
+                </div>
+                <div class="menu-audit-wrap">
+                    <div class="panel-head compact">
+                        <h2 id="menuAuditTitle">MenuOps 审计</h2>
+                        <span class="panel-sub" id="menuAuditSub">SQLite 审计记录与趋势汇总</span>
+                    </div>
+                    <div id="menuAuditSummary" class="diag-summary empty-tip">审计汇总加载中...</div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th id="thMenuAuditTime">时间</th>
+                                <th id="thMenuAuditOp">操作</th>
+                                <th id="thMenuAuditStatus">状态</th>
+                                <th id="thMenuAuditRisk">风险</th>
+                                <th id="thMenuAuditCost">耗时</th>
+                            </tr>
+                            </thead>
+                            <tbody id="menuAuditBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="menuAuditHint" class="test-result empty-tip">暂无审计记录</div>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <section class="split" data-animate>
+        <article class="panel">
+            <div class="panel-head">
+                <h2 id="listenerTitle">Listeners</h2>
+                <span class="panel-sub" id="listenerSub">Runtime status for each listener</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr><th id="thListenerName">Name</th><th id="thListenerStatus">Status</th></tr>
+                    </thead>
+                    <tbody id="listenersBody"></tbody>
+                </table>
+            </div>
+        </article>
+
+        <article class="panel">
+            <div class="panel-head">
+                <h2 id="eventsTitle">Recent Events</h2>
+                <span class="panel-sub" id="eventsSub">Latest 80 events</span>
+            </div>
+            <div id="eventsBox" class="events"></div>
+        </article>
+    </section>
+
+    <section class="panel" data-animate>
+        <div class="panel-head">
+            <h2 id="sessionTitle">Active Sessions</h2>
+            <span class="panel-sub" id="sessionSub">Live connection sessions</span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th id="thSessionId">Session ID</th>
+                    <th id="thSessionProtocol">Protocol</th>
+                    <th id="thSessionClient">Client</th>
+                    <th id="thSessionTarget">Target</th>
+                    <th id="thSessionIn">In</th>
+                    <th id="thSessionOut">Out</th>
+                    <th id="thSessionStart">Started At</th>
+                </tr>
+                </thead>
+                <tbody id="sessionsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <footer class="footer-note">
+        <span id="lastUpdate">Last update: -</span>
+    </footer>
+</main>
+
+<script>
+    window.PROXY_DASHBOARD_CONFIG = {
+        refreshSeconds: [[${refreshSeconds}]],
+        timezone: '[[${timezone}]]',
+        socksHost: '[[${socksHost}]]',
+        socksPort: [[${socksPort}]],
+        socksAuthEnabled: [[${socksAuthEnabled}]],
+        httpHost: '[[${httpHost}]]',
+        httpPort: [[${httpPort}]],
+        httpAuthEnabled: [[${httpAuthEnabled}]],
+        menuOpsEnabled: [[${menuOpsEnabled}]],
+        menuOpsWorkdir: '[[${menuOpsWorkdir}]]',
+        menuOpsAllowDestructive: [[${menuOpsAllowDestructive}]],
+        menuOpsAllowRemoteScripts: [[${menuOpsAllowRemoteScripts}]],
+        menuOpsAuditLogPath: '[[${menuOpsAuditLogPath}]]',
+        menuOpsAuditDbEnabled: [[${menuOpsAuditDbEnabled}]],
+        menuOpsAuditDbPath: '[[${menuOpsAuditDbPath}]]',
+        menuOpsAuditDbRetentionDays: [[${menuOpsAuditDbRetentionDays}]],
+        menuOpsAuditDbMaxRows: [[${menuOpsAuditDbMaxRows}]],
+        menuOpsDiagnosticsDir: '[[${menuOpsDiagnosticsDir}]]',
+        menuOpsDiagnosticsRetentionDays: [[${menuOpsDiagnosticsRetentionDays}]],
+        menuOpsDiagnosticsMaxFiles: [[${menuOpsDiagnosticsMaxFiles}]],
+        menuOpsDiagnosticsMaxDownloadBytes: [[${menuOpsDiagnosticsMaxDownloadBytes}]],
+        menuOpsAutoSwitchEndpoints: '[[${menuOpsAutoSwitchEndpoints}]]',
+        menuOpsAutoSwitchStacks: '[[${menuOpsAutoSwitchStacks}]]'
+    };
+</script>
+<script src="/js/dashboard.js"></script>
+</body>
+</html>
