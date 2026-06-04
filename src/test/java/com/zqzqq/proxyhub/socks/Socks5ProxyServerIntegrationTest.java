@@ -61,7 +61,7 @@ class Socks5ProxyServerIntegrationTest {
                 properties,
                 metricsService,
                 new AccessControlService(properties),
-                new AuthService(properties));
+                new AuthService(properties, null));
         proxyServer.start();
 
         try (Socket socket = new Socket()) {

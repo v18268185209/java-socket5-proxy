@@ -70,7 +70,7 @@ class HttpProxyServerIntegrationTest {
                 properties,
                 metricsService,
                 new AccessControlService(properties),
-                new AuthService(properties));
+                new AuthService(properties, null));
         proxyServer.start();
 
         byte[] requestBody = "proxy-stream-test-".repeat(32768).getBytes(StandardCharsets.UTF_8);
@@ -120,7 +120,7 @@ class HttpProxyServerIntegrationTest {
                 properties,
                 metricsService,
                 new AccessControlService(properties),
-                new AuthService(properties));
+                new AuthService(properties, null));
         proxyServer.start();
 
         try (Socket socket = new Socket()) {

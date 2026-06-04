@@ -8,10 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.zqzqq.proxyhub.core.metrics.ProxyFailureReason;
 import com.zqzqq.proxyhub.core.metrics.ProxyMetricsService;
 import com.zqzqq.proxyhub.management.dto.RuntimeSelfCheckResponse;
+import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -19,7 +24,9 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
                 "proxy.socks.enabled=false",
                 "proxy.http.enabled=false",
                 "proxy.acl.enabled=true",
-                "proxy.performance.max-connections-per-client=77"
+                "proxy.performance.max-connections-per-client=77",
+                "proxy.users.store-path=/tmp/proxyhub-test-users.db",
+                "proxy.management.enabled=false"
         })
 class RuntimeSelfCheckIntegrationTest {
 
@@ -35,9 +42,19 @@ class RuntimeSelfCheckIntegrationTest {
         metricsService.recordFailure(ProxyFailureReason.ACL_DENIED, "blocked twice");
         metricsService.recordFailure(ProxyFailureReason.UPSTREAM_CONNECT_FAILED, "upstream timeout");
 
-        RuntimeSelfCheckResponse body = restTemplate.getForObject(
+        // Use basic auth for management API (default: mgmtadmin/mgmtadmin)
+        String credentials = "mgmtadmin:mgmtadmin";
+        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Basic " + encoded);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<RuntimeSelfCheckResponse> response = restTemplate.exchange(
                 "/api/v1/runtime/self-check?top=2",
+                HttpMethod.GET,
+                entity,
                 RuntimeSelfCheckResponse.class);
+        RuntimeSelfCheckResponse body = response.getBody();
 
         assertNotNull(body);
         assertFalse(body.runtimeRunning());

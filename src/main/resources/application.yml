@@ -22,19 +22,22 @@ proxy:
     bind-host: 0.0.0.0
     port: 1080
     auth:
-      enabled: false
-      username: admin
+      enabled: true
+      username: proxyadmin
+      # ⚠️  Default password — CHANGE IMMEDIATELY. Multi-user SQLite store takes over on first run.
       password: admin
   http:
     name: HTTP
     enabled: true
     bind-host: 0.0.0.0
     port: 8080
-    engine: squid
+    engine: legacy
     # squid legacy
     auth:
-      enabled: false
+      enabled: true
       username: admin
+      # ⚠️  Default password — CHANGE IMMEDIATELY on first use.
+      # After first start, multi-user store (SQLite) takes over.
       password: admin
     squid:
       executable: squid
@@ -45,7 +48,11 @@ proxy:
       foreground: true
       extra-args: []
   acl:
-    enabled: false
+    enabled: true
+    # When CIDRs are empty, all clients are allowed (whitelist mode is off).
+    # To enable whitelist mode, add allowed CIDRs below:
+    # allow-client-cidrs:
+    #   - 10.0.0.0/8
     allow-client-cidrs: []
     deny-target-hosts:
       - localhost
@@ -68,22 +75,28 @@ proxy:
     write-buffer-high-water-mark: 131072
     prefer-native-transport: true
     http-pending-request-max-bytes: 1048576
+  users:
+    store-path: ./logs/proxy-users.db
+    legacy-fallback-enabled: true
   dashboard:
     refresh-seconds: 2
     max-recent-events: 3000
     timezone: Asia/Shanghai
     record-session-lifecycle-events: false
   management:
-    enabled: false
-    protect-actuator: false
-    allow-cidrs: []
+    enabled: true
+    protect-actuator: true
+    allow-cidrs:
+      - 127.0.0.1/32
+      - ::1/128
     allow-basic-auth: true
-    allow-token-auth: false
+    allow-token-auth: true
     access-token: ""
     basic:
       enabled: true
-      username: admin
-      password: admin
+      username: mgmtadmin
+      # ⚠️  CHANGE THIS PASSWORD on first use
+      password: mgmtadmin
 
 logging:
   level:
@@ -91,7 +104,7 @@ logging:
     com.zqzqq.proxyhub: INFO
 
 menu-ops:
-  enabled: true
+  enabled: false
   bash-path: /bin/bash
   workdir: .
   timeout-seconds: 3600

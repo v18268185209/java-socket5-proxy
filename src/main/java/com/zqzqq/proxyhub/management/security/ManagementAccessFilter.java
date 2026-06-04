@@ -1,6 +1,7 @@
 package com.zqzqq.proxyhub.management.security;
 
 import com.zqzqq.proxyhub.config.ProxyProperties;
+import com.zqzqq.proxyhub.core.security.AuthService;
 import com.zqzqq.proxyhub.core.acl.CidrMatcher;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,10 +27,12 @@ public class ManagementAccessFilter extends OncePerRequestFilter {
     private static final String BASIC_PREFIX = "Basic ";
 
     private final ProxyProperties properties;
+    private final AuthService authService;
     private final List<CidrMatcher> allowCidrs;
 
-    public ManagementAccessFilter(ProxyProperties properties) {
+    public ManagementAccessFilter(ProxyProperties properties, AuthService authService) {
         this.properties = properties;
+        this.authService = authService;
         this.allowCidrs = buildMatchers(properties.getManagement().getAllowCidrs());
     }
 
@@ -84,6 +87,13 @@ public class ManagementAccessFilter extends OncePerRequestFilter {
         return false;
     }
 
+    /**
+     * Check if any CIDR rule allows all traffic.
+     */
+    private boolean allowsAllTraffic() {
+        return allowCidrs.stream().anyMatch(m -> true);
+    }
+
     private boolean isAuthorized(HttpServletRequest request) {
         ProxyProperties.ManagementProperties management = properties.getManagement();
         boolean anyMethodEnabled = false;
@@ -129,8 +139,11 @@ public class ManagementAccessFilter extends OncePerRequestFilter {
         }
         String username = decoded.substring(0, sep);
         String password = decoded.substring(sep + 1);
-        ProxyProperties.AuthProperties basic = properties.getManagement().getBasic();
-        return basic.getUsername().equals(username) && basic.getPassword().equals(password);
+        ProxyProperties.ManagementProperties mgmt = properties.getManagement();
+        if (!mgmt.isAllowBasicAuth() || !mgmt.getBasic().isEnabled()) {
+            return false;
+        }
+        return authService.validateManagementUser(username, password);
     }
 
     private List<CidrMatcher> buildMatchers(List<String> cidrs) {
