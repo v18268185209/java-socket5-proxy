@@ -33,6 +33,9 @@ public class ProxyProperties {
     @Valid
     private ManagementProperties management = new ManagementProperties();
 
+    @Valid
+    private UserProperties users = new UserProperties();
+
     public ListenerProperties getSocks() {
         return socks;
     }
@@ -79,6 +82,14 @@ public class ProxyProperties {
 
     public void setManagement(ManagementProperties management) {
         this.management = management;
+    }
+
+    public UserProperties getUsers() {
+        return users;
+    }
+
+    public void setUsers(UserProperties users) {
+        this.users = users;
     }
 
     public static class ListenerProperties {
@@ -601,5 +612,11 @@ public class ProxyProperties {
         public void setBasic(AuthProperties basic) {
             this.basic = basic;
         }
+    }
+
+    public enum UserType {
+        SOCKS5,
+        HTTP,
+        MANAGEMENT
     }
 }
