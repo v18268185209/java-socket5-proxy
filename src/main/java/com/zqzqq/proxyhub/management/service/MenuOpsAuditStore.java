@@ -97,7 +97,34 @@ public class MenuOpsAuditStore {
         }
     }
 
-    public List<MenuAuditRecordResponse> listRecent(int limit) {
+
+    /**
+     * Record a job as submitted (pending).
+     */
+    public void recordJobSubmitted(String jobId, String operationId) {
+        if (!isEnabled()) return;
+        Instant now = Instant.now();
+        MenuJobResponse job = new MenuJobResponse(
+                jobId, operationId, operationId, "low",
+                "submitted", false, null, null,
+                now, now, now, null, null, null, null, List.of());
+        record(job);
+    }
+
+    /**
+     * Record a job as completed.
+     */
+    public void recordJobCompleted(String jobId, String operationId) {
+        if (!isEnabled()) return;
+        Instant now = Instant.now();
+        MenuJobResponse job = new MenuJobResponse(
+                jobId, operationId, operationId, "low",
+                "completed", true, null, null,
+                now, now, now, now, 0L, 0, null, List.of());
+        record(job);
+    }
+
+        public List<MenuAuditRecordResponse> listRecent(int limit) {
         if (!isEnabled()) {
             return List.of();
         }

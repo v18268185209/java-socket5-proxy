@@ -81,7 +81,7 @@ public class RuntimeSelfCheckService {
         return new RuntimeSelfCheckResponse(
                 Instant.now(),
                 runtimeManager.isRunning(),
-                NettyTuningSupport.transportName(properties),
+                (String.valueOf(NettyTuningSupport.transportName(properties))),
                 Arrays.asList(environment.getActiveProfiles()),
                 resolveConfigSources(),
                 properties.getAcl().isEnabled(),
