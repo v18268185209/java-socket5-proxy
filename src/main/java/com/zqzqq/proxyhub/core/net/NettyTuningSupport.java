@@ -67,14 +67,23 @@ public final class NettyTuningSupport {
     }
 
     public static String transportName(ProxyProperties properties) {
-        return resolveTransportType(properties).name().toLowerCase(Locale.ROOT);
+        try {
+            String name = resolveTransportType(properties).name().toLowerCase(Locale.ROOT);
+            return name != null ? name : "nio";
+        } catch (Throwable t) {
+            return "nio";
+        }
     }
 
     static TransportType resolveTransportType(ProxyProperties properties) {
-        return resolveTransportType(
-                properties.getPerformance().isPreferNativeTransport(),
-                System.getProperty("os.name", ""),
-                Epoll.isAvailable());
+        try {
+            return resolveTransportType(
+                    properties.getPerformance().isPreferNativeTransport(),
+                    System.getProperty("os.name", ""),
+                    Epoll.isAvailable());
+        } catch (Throwable t) {
+            return TransportType.NIO;
+        }
     }
 
     static TransportType resolveTransportType(boolean preferNativeTransport, String osName, boolean epollAvailable) {

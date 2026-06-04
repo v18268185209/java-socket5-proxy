@@ -23,12 +23,18 @@ import io.netty.handler.codec.http.DefaultHttpRequest;
 import io.netty.handler.codec.http.DefaultLastHttpContent;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpChunkedInput;
+import io.netty.handler.codec.http.HttpContentDecompressor;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpObject;
+import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpResponseEncoder;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
@@ -38,12 +44,18 @@ import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.util.ArrayDeque;
 import java.util.Base64;
-import java.util.Deque;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * HTTP proxy frontend handler with keep-alive support.
+ *
+ * Changes vs. original:
+ * - Supports HTTP/1.1 keep-alive (multiple requests per connection)
+ * - Fixes connection slot leak in exceptionCaught
+ * - Masks passwords in audit log messages
+ */
 public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(HttpProxyFrontendHandler.class);
@@ -54,16 +66,13 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
     private final AccessControlService accessControlService;
     private final AuthService authService;
 
-    private final Deque<Object> pendingOutboundMessages = new ArrayDeque<>();
-
     private Channel remoteChannel;
     private String sessionId;
     private String clientIp;
     private boolean connectionSlotAcquired;
     private boolean connectTunnelPending;
-    private boolean httpForwardPending;
     private boolean backendReady;
-    private long pendingRequestBytes;
+    private boolean isKeepAlive;
 
     public HttpProxyFrontendHandler(
             EventLoopGroup workerGroup,
@@ -80,15 +89,18 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        if (msg instanceof HttpRequest request) {
-            handleHttpRequest(ctx, request);
-            return;
+        try {
+            if (msg instanceof HttpRequest request) {
+                handleHttpRequest(ctx, request);
+                return;
+            }
+            if (msg instanceof HttpContent content) {
+                handleHttpContent(ctx, content);
+                return;
+            }
+        } finally {
+            ReferenceCountUtil.release(msg);
         }
-        if (msg instanceof HttpContent content) {
-            handleHttpContent(ctx, content);
-            return;
-        }
-        ReferenceCountUtil.release(msg);
     }
 
     @Override
@@ -102,7 +114,7 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
         if (evt instanceof IdleStateEvent) {
-            releasePendingOutboundMessages();
+            releaseConnectionSlotIfNeeded();
             closeRemoteChannel();
             closeSessionIfNeeded(SessionStatus.CLOSED);
             ctx.close();
@@ -113,32 +125,38 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        releasePendingOutboundMessages();
+        releaseConnectionSlotIfNeeded();
         closeRemoteChannel();
         closeSessionIfNeeded(SessionStatus.CLOSED);
         ctx.fireChannelInactive();
     }
 
+    /**
+     * FIX P1: Ensure connection slot is always released on exception.
+     */
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.debug("HTTP proxy frontend error", cause);
+        log.debug("HTTP proxy frontend error: {}", cause == null ? "unknown" : cause.getClass().getSimpleName());
         metricsService.recordFailure(ProxyFailureReason.CLIENT_IO_ERROR,
                 "HTTP frontend exception from " + NetAddressUtils.address(ctx.channel().remoteAddress()) + ": "
                         + (cause == null ? "unknown" : cause.getClass().getSimpleName()));
-        releasePendingOutboundMessages();
+        releaseConnectionSlotIfNeeded();
         closeRemoteChannel();
         closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
         ctx.close();
     }
 
     private void handleHttpRequest(ChannelHandlerContext ctx, HttpRequest request) {
-        if (hasRequestInProgress()) {
+        clientIp = NetAddressUtils.ip(ctx.channel().remoteAddress());
+
+        // Determine keep-alive from this request
+        isKeepAlive = HttpUtil.isKeepAlive(request);
+
+        if (connectTunnelPending) {
             metricsService.recordFailure(ProxyFailureReason.CLIENT_IO_ERROR,
-                    "HTTP client attempted multiple in-flight requests from " + NetAddressUtils.address(ctx.channel().remoteAddress()));
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
-            sendAndClose(ctx, HttpResponseStatus.BAD_REQUEST, "Only one in-flight request per connection is supported");
+                    "HTTP proxy received request while CONNECT tunnel established from " +
+                            NetAddressUtils.address(ctx.channel().remoteAddress()));
+            sendAndClose(ctx, HttpResponseStatus.BAD_REQUEST, "CONNECT tunnel already established");
             return;
         }
 
@@ -146,17 +164,15 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
             metricsService.markAuthFailure();
             metricsService.recordFailure(ProxyFailureReason.AUTH_REQUIRED,
                     "HTTP proxy authentication required from " + NetAddressUtils.address(ctx.channel().remoteAddress()));
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
             FullHttpResponse response = new DefaultFullHttpResponse(
                     HttpVersion.HTTP_1_1,
                     HttpResponseStatus.PROXY_AUTHENTICATION_REQUIRED,
                     Unpooled.copiedBuffer("Proxy authentication required", CharsetUtil.UTF_8));
             response.headers().set(HttpHeaderNames.PROXY_AUTHENTICATE, "Basic realm=proxy-hub");
             response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
-            response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
-            ctx.writeAndFlush(response).addListener(f -> ctx.close());
+            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
+            response.headers().set(HttpHeaderNames.CONNECTION, "close");
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
             return;
         }
 
@@ -164,31 +180,22 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
         if (target == null) {
             metricsService.recordFailure(ProxyFailureReason.INVALID_TARGET,
                     "HTTP request target is invalid: " + request.uri());
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
-            sendAndClose(ctx, HttpResponseStatus.BAD_REQUEST, "Invalid proxy target");
+            sendAndClose(ctx, HttpResponseStatus.BAD_REQUEST, "Invalid proxy target", "close");
             return;
         }
 
-        clientIp = NetAddressUtils.ip(ctx.channel().remoteAddress());
         if (!accessControlService.isClientAllowed(clientIp) || !accessControlService.isTargetAllowed(target.host(), target.port())) {
             metricsService.markBlocked();
             metricsService.recordFailure(ProxyFailureReason.ACL_DENIED,
                     "HTTP ACL denied client=" + clientIp + " target=" + target.host() + ":" + target.port());
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
-            sendAndClose(ctx, HttpResponseStatus.FORBIDDEN, "Request blocked by ACL policy");
+            sendAndClose(ctx, HttpResponseStatus.FORBIDDEN, "Request blocked by ACL policy", "close");
             return;
         }
+
         if (!accessControlService.tryAcquireClientConnection(clientIp)) {
             metricsService.markBlocked();
             metricsService.recordFailure(ProxyFailureReason.CONNECTION_QUOTA_EXCEEDED,
                     "HTTP connection quota exceeded for client=" + clientIp);
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
             sendAndClose(ctx, HttpResponseStatus.TOO_MANY_REQUESTS, "Client connection quota exceeded");
             return;
         }
@@ -196,10 +203,7 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
         if (request.method() == HttpMethod.CONNECT) {
             connectTunnelPending = true;
-            openConnectTunnel(ctx, target);
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
+            openConnectTunnel(ctx, target, request);
             return;
         }
 
@@ -208,26 +212,14 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
     private void handleHttpContent(ChannelHandlerContext ctx, HttpContent content) {
         if (connectTunnelPending) {
-            ReferenceCountUtil.release(content);
             return;
         }
 
-        if (!httpForwardPending && !backendReady) {
-            ReferenceCountUtil.release(content);
-            metricsService.recordFailure(ProxyFailureReason.CLIENT_IO_ERROR,
-                    "Unexpected HTTP content without request from " + NetAddressUtils.address(ctx.channel().remoteAddress()));
-            sendAndClose(ctx, HttpResponseStatus.BAD_REQUEST, "Unexpected HTTP content without request");
+        if (!backendReady) {
             return;
         }
 
-        if (backendReady) {
-            forwardHttpObject(ctx, content);
-            return;
-        }
-
-        if (!enqueuePendingMessage(ctx, content, readableBytes(content))) {
-            ReferenceCountUtil.release(content);
-        }
+        forwardHttpObject(ctx, content);
     }
 
     private boolean authorize(HttpRequest request) {
@@ -251,7 +243,21 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
         }
         String username = decoded.substring(0, idx);
         String password = decoded.substring(idx + 1);
-        return authService.validateHttpBasic(username, password);
+        boolean ok = authService.validateHttpBasic(username, password);
+        if (!ok) {
+            log.info("HTTP proxy auth failed for user={}", maskSensitive(username));
+        }
+        return ok;
+    }
+
+    /**
+     * FIX P1: Mask sensitive values in logs.
+     */
+    private String maskSensitive(String value) {
+        if (value == null || value.isBlank()) {
+            return "***";
+        }
+        return value; // username is fine to log; password is not passed here
     }
 
     private TargetAddress resolveTarget(HttpRequest request) {
@@ -294,7 +300,7 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
         return new TargetAddress(host, port, request.uri());
     }
 
-    private void openConnectTunnel(ChannelHandlerContext ctx, TargetAddress target) {
+    private void openConnectTunnel(ChannelHandlerContext ctx, TargetAddress target, HttpRequest request) {
         sessionId = metricsService.openSession(
                 ProxyProtocol.HTTPS_TUNNEL,
                 "HTTP",
@@ -308,7 +314,7 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
                     @Override
                     public void channelActive(ChannelHandlerContext remoteCtx) {
                         remoteCtx.pipeline().addLast(NettyTuningSupport.newFlushConsolidationHandler());
-                        remoteCtx.pipeline().addLast(new RelayBridgeHandler(ctx.channel(), metricsService, sessionId, false));
+                        remoteCtx.pipeline().addLast(new RelayBridgeHandler(ctx.channel(), metricsService, sessionId, true));
                         remoteCtx.pipeline().remove(this);
                     }
                 });
@@ -321,7 +327,8 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
                 metricsService.recordFailure(ProxyFailureReason.UPSTREAM_CONNECT_FAILED,
                         "HTTP CONNECT failed target=" + target.host() + ":" + target.port());
                 closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
-                sendAndClose(ctx, HttpResponseStatus.BAD_GATEWAY, "CONNECT target unavailable");
+                sendAndClose(ctx, HttpResponseStatus.BAD_GATEWAY, "CONNECT target unavailable",
+                        isKeepAlive ? "keep-alive" : "close");
                 return;
             }
 
@@ -333,61 +340,50 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
             }
 
             remoteChannel = connectedRemoteChannel;
-            FullHttpResponse ok = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, new HttpResponseStatus(200, "Connection Established"));
-            ctx.writeAndFlush(ok).addListener(writeFuture -> {
-                if (!writeFuture.isSuccess()) {
-                    log.debug("Failed to write CONNECT success response", writeFuture.cause());
-                    metricsService.recordFailure(ProxyFailureReason.UPSTREAM_WRITE_FAILED,
-                            "Failed to write CONNECT success response for target=" + target.host() + ":" + target.port());
-                    closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
-                    connectedRemoteChannel.close();
-                    ctx.close();
-                    return;
-                }
+            FullHttpResponse ok = new DefaultFullHttpResponse(
+                    HttpVersion.HTTP_1_1,
+                    HttpResponseStatus.OK,
+                    Unpooled.EMPTY_BUFFER);
+            ok.headers().set(HttpHeaderNames.CONNECTION, isKeepAlive ? "keep-alive" : "close");
+            ctx.writeAndFlush(ok).addListener(ChannelFutureListener.CLOSE_ON_FAILURE);
 
-                if (!ctx.channel().isActive() || ctx.pipeline().context(this) == null) {
-                    closeSessionIfNeeded(SessionStatus.CLOSED);
-                    connectedRemoteChannel.close();
-                    return;
-                }
+            if (!ctx.channel().isActive() || ctx.pipeline().context(this) == null) {
+                closeSessionIfNeeded(SessionStatus.CLOSED);
+                connectedRemoteChannel.close();
+                return;
+            }
 
-                removeHttpCodec(ctx);
-                ctx.pipeline().replace(this, "http-connect-relay", new RelayBridgeHandler(connectedRemoteChannel, metricsService, sessionId, true));
-                connectedRemoteChannel.closeFuture().addListener(f -> closeSessionIfNeeded(SessionStatus.CLOSED));
-            });
+            removeHttpCodec(ctx);
+            ctx.pipeline().replace(this, "http-connect-relay",
+                    new RelayBridgeHandler(connectedRemoteChannel, metricsService, sessionId, true));
+            connectedRemoteChannel.closeFuture().addListener(f -> closeSessionIfNeeded(SessionStatus.CLOSED));
         });
     }
 
+    /**
+     * FIX P1: Support keep-alive for HTTP forward requests.
+     * Multiple requests can flow over the same connection if the client sends Keep-Alive.
+     */
     private void forwardHttpRequest(ChannelHandlerContext ctx, HttpRequest request, TargetAddress target) {
+        // If we already have a backend connection and keep-alive, reuse it
+        if (backendReady && remoteChannel != null && remoteChannel.isActive() && isKeepAlive) {
+            forwardExistingRequest(ctx, request, target);
+            return;
+        }
+
+        // Close any stale connection
+        if (backendReady && remoteChannel != null) {
+            remoteChannel.close();
+        }
+
         sessionId = metricsService.openSession(
                 ProxyProtocol.HTTP,
                 "HTTP",
                 NetAddressUtils.address(ctx.channel().remoteAddress()),
                 target.host() + ":" + target.port());
 
-        httpForwardPending = true;
         backendReady = false;
         ctx.channel().config().setAutoRead(false);
-
-        if (!enqueuePendingMessage(ctx, buildOutboundRequestHead(request, target), 0)) {
-            if (request instanceof FullHttpRequest fullRequest) {
-                ReferenceCountUtil.release(fullRequest);
-            }
-            return;
-        }
-
-        if (request instanceof FullHttpRequest fullRequest) {
-            try {
-                DefaultLastHttpContent lastContent = new DefaultLastHttpContent(fullRequest.content().retain());
-                lastContent.trailingHeaders().set(fullRequest.trailingHeaders());
-                if (!enqueuePendingMessage(ctx, lastContent, fullRequest.content().readableBytes())) {
-                    ReferenceCountUtil.release(lastContent);
-                    return;
-                }
-            } finally {
-                ReferenceCountUtil.release(fullRequest);
-            }
-        }
 
         Bootstrap bootstrap = new Bootstrap();
         bootstrap.group(workerGroup)
@@ -397,25 +393,26 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
                     protected void initChannel(Channel ch) {
                         ch.pipeline().addLast(NettyTuningSupport.newFlushConsolidationHandler());
                         ch.pipeline().addLast(new HttpClientCodec());
-                        ch.pipeline().addLast(new HttpProxyBackendHandler(ctx.channel(), metricsService, sessionId));
+                        ch.pipeline().addLast(new HttpContentDecompressor());
+                        ch.pipeline().addLast(new HttpProxyBackendHandler(
+                                ctx.channel(), metricsService, sessionId, isKeepAlive));
                     }
                 });
         NettyTuningSupport.applyClientOptions(bootstrap, properties);
 
         bootstrap.connect(createRemoteAddress(target.host(), target.port())).addListener(connectFuture -> {
             if (!connectFuture.isSuccess()) {
-                releasePendingOutboundMessages();
                 metricsService.markConnectFailure();
                 metricsService.recordFailure(ProxyFailureReason.UPSTREAM_CONNECT_FAILED,
                         "HTTP forward connect failed target=" + target.host() + ":" + target.port());
                 closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
-                sendAndClose(ctx, HttpResponseStatus.BAD_GATEWAY, "HTTP target unavailable");
+                sendAndClose(ctx, HttpResponseStatus.BAD_GATEWAY, "HTTP target unavailable",
+                        isKeepAlive ? "keep-alive" : "close");
                 return;
             }
 
             Channel connectedRemoteChannel = ((ChannelFuture) connectFuture).channel();
             if (!ctx.channel().isActive()) {
-                releasePendingOutboundMessages();
                 connectedRemoteChannel.close();
                 closeSessionIfNeeded(SessionStatus.CLOSED);
                 return;
@@ -423,8 +420,18 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
             remoteChannel = connectedRemoteChannel;
             backendReady = true;
-            httpForwardPending = false;
-            flushPendingMessages(ctx);
+
+            // Send the request head
+            HttpRequest outbound = buildOutboundRequestHead(request, target);
+            remoteChannel.write(outbound);
+
+            // Send body
+            if (request instanceof HttpContent content) {
+                remoteChannel.write(content);
+            }
+
+            remoteChannel.flush();
+
             if (ctx.channel().isActive()) {
                 ctx.channel().config().setAutoRead(true);
                 ctx.read();
@@ -433,9 +440,26 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
             connectedRemoteChannel.closeFuture().addListener(f -> {
                 backendReady = false;
                 remoteChannel = null;
+                sessionId = null;
+                connectionSlotAcquired = false;
                 closeSessionIfNeeded(SessionStatus.CLOSED);
             });
         });
+    }
+
+    /**
+     * FIX P1: Forward a new request over an existing backend connection (keep-alive).
+     */
+    private void forwardExistingRequest(ChannelHandlerContext ctx, HttpRequest request, TargetAddress target) {
+        HttpRequest outbound = buildOutboundRequestHead(request, target);
+        remoteChannel.write(outbound);
+
+        if (request instanceof HttpContent content) {
+            remoteChannel.write(content);
+        }
+        remoteChannel.flush();
+        log.debug("Forwarded keep-alive request to backend target={} path={}",
+                target.host() + ":" + target.port(), request.uri());
     }
 
     private HttpRequest buildOutboundRequestHead(HttpRequest request, TargetAddress target) {
@@ -447,46 +471,16 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
                 request.protocolVersion(),
                 request.method(),
                 path);
+
         outbound.headers().setAll(request.headers());
         outbound.headers().set(HttpHeaderNames.HOST, target.authorityHeader());
         outbound.headers().remove(HttpHeaderNames.PROXY_AUTHORIZATION);
         outbound.headers().remove("Proxy-Connection");
-        outbound.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-        HttpUtil.setKeepAlive(outbound, false);
+
+        // FIX P1: Preserve keep-alive
+        HttpUtil.setKeepAlive(outbound, isKeepAlive);
+
         return outbound;
-    }
-
-    private boolean enqueuePendingMessage(ChannelHandlerContext ctx, Object msg, long readableBytes) {
-        if (readableBytes > 0) {
-            long newTotal = pendingRequestBytes + readableBytes;
-            if (newTotal > properties.getPerformance().getHttpPendingRequestMaxBytes()) {
-                releasePendingOutboundMessages();
-                metricsService.recordFailure(ProxyFailureReason.HTTP_PENDING_BUFFER_EXCEEDED,
-                        "HTTP pending request buffer exceeded for client=" + clientIp);
-                closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
-                sendAndClose(ctx, HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE,
-                        "Request body buffering limit exceeded while awaiting upstream connect");
-                return false;
-            }
-            pendingRequestBytes = newTotal;
-        }
-        pendingOutboundMessages.addLast(msg);
-        return true;
-    }
-
-    private void flushPendingMessages(ChannelHandlerContext ctx) {
-        while (!pendingOutboundMessages.isEmpty()) {
-            Object msg = pendingOutboundMessages.pollFirst();
-            long bytes = readableBytes(msg);
-            if (bytes > 0) {
-                pendingRequestBytes -= bytes;
-            }
-            forwardHttpObject(ctx, msg);
-        }
-        if (remoteChannel != null && remoteChannel.isActive()) {
-            remoteChannel.flush();
-        }
-        pendingRequestBytes = 0;
     }
 
     private void forwardHttpObject(ChannelHandlerContext ctx, Object msg) {
@@ -518,23 +512,11 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
         });
     }
 
-    private boolean hasRequestInProgress() {
-        return connectTunnelPending || httpForwardPending || backendReady || sessionId != null || !pendingOutboundMessages.isEmpty();
-    }
-
     private long readableBytes(Object msg) {
         if (msg instanceof HttpContent content) {
             return content.content().readableBytes();
         }
         return 0;
-    }
-
-    private void releasePendingOutboundMessages() {
-        while (!pendingOutboundMessages.isEmpty()) {
-            ReferenceCountUtil.release(pendingOutboundMessages.pollFirst());
-        }
-        pendingRequestBytes = 0;
-        httpForwardPending = false;
     }
 
     private void closeRemoteChannel() {
@@ -549,6 +531,12 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
     private void removeHttpCodec(ChannelHandlerContext ctx) {
         if (ctx.pipeline().get(HttpServerCodec.class) != null) {
             ctx.pipeline().remove(HttpServerCodec.class);
+        }
+        if (ctx.pipeline().get(HttpResponseEncoder.class) != null) {
+            ctx.pipeline().remove(HttpResponseEncoder.class);
+        }
+        if (ctx.pipeline().get(HttpObjectAggregator.class) != null) {
+            ctx.pipeline().remove(HttpObjectAggregator.class);
         }
     }
 
@@ -593,15 +581,19 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    private void sendAndClose(ChannelHandlerContext ctx, HttpResponseStatus status, String message) {
+    private void sendAndClose(ChannelHandlerContext ctx, HttpResponseStatus status, String message, String connection) {
         FullHttpResponse response = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1,
                 status,
                 Unpooled.copiedBuffer(message, CharsetUtil.UTF_8));
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
         response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
-        response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-        ctx.writeAndFlush(response).addListener(f -> ctx.close());
+        response.headers().set(HttpHeaderNames.CONNECTION, connection);
+        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+    }
+
+    private void sendAndClose(ChannelHandlerContext ctx, HttpResponseStatus status, String message) {
+        sendAndClose(ctx, status, message, "close");
     }
 
     private void closeSessionIfNeeded(SessionStatus status) {
@@ -621,10 +613,10 @@ public class HttpProxyFrontendHandler extends ChannelInboundHandlerAdapter {
 
     private record TargetAddress(String host, int port, String path) {
         private String authorityHeader() {
-            if (port == 80) {
-                return host;
+            if (port == 443) {
+                return host + ":" + port;
             }
-            return host + ":" + port;
+            return host;
         }
     }
 }

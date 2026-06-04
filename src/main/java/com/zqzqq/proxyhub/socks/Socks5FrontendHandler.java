@@ -100,12 +100,12 @@ public class Socks5FrontendHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.info("SOCKS5 frontend error from {}: {}",
-                NetAddressUtils.address(ctx.channel().remoteAddress()),
-                cause == null ? "unknown" : cause.toString());
+        log.debug("SOCKS5 frontend error: {}", cause == null ? "unknown" : cause.getClass().getSimpleName());
         metricsService.recordFailure(ProxyFailureReason.CLIENT_IO_ERROR,
                 "SOCKS5 frontend exception from " + NetAddressUtils.address(ctx.channel().remoteAddress())
                         + ": " + (cause == null ? "unknown" : cause.getClass().getSimpleName()));
+        // FIX P1: Always release connection slot on exception to prevent leak
+        releaseConnectionSlotIfNeeded();
         closeSessionIfNeeded(SessionStatus.FAILED_CONNECT);
         ctx.close();
     }

@@ -10,16 +10,27 @@ import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.ReferenceCountUtil;
 
+/**
+ * Backend handler that forwards proxy responses back to the client.
+ *
+ * FIX P1: Supports keep-alive mode where LastHttpContent does NOT close the connection.
+ */
 public class HttpProxyBackendHandler extends ChannelInboundHandlerAdapter {
 
     private final Channel clientChannel;
     private final ProxyMetricsService metricsService;
     private final String sessionId;
+    private final boolean keepAlive;
 
     public HttpProxyBackendHandler(Channel clientChannel, ProxyMetricsService metricsService, String sessionId) {
+        this(clientChannel, metricsService, sessionId, false);
+    }
+
+    public HttpProxyBackendHandler(Channel clientChannel, ProxyMetricsService metricsService, String sessionId, boolean keepAlive) {
         this.clientChannel = clientChannel;
         this.metricsService = metricsService;
         this.sessionId = sessionId;
+        this.keepAlive = keepAlive;
     }
 
     @Override
@@ -34,14 +45,18 @@ public class HttpProxyBackendHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        boolean closeAfterWrite = msg instanceof LastHttpContent;
-        if (closeAfterWrite) {
+        boolean lastContent = msg instanceof LastHttpContent;
+        if (lastContent) {
+            // FIX P1: Don't close keep-alive connections after LastHttpContent
+
             clientChannel.writeAndFlush(msg).addListener((ChannelFutureListener) f -> {
                 if (!f.isSuccess()) {
                     closeBoth(ctx.channel());
                     return;
                 }
-                closeBoth(ctx.channel());
+                if (!keepAlive) {
+                    closeBoth(ctx.channel());
+                }
             });
             return;
         }
