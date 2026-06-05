@@ -1,6 +1,5 @@
 package com.zqzqq.proxyhub;
 
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
@@ -20,7 +19,10 @@ public class ProxyHubApplication {
         app.setAdditionalProfiles("production");
         ConfigurableApplicationContext ctx = app.run(args);
         
-        // Print startup security summary
-        new SecurityBanner().print();
+        // SecurityBanner runs automatically via CommandLineRunner
+        Environment env = ctx.getEnvironment();
+        int port = env.getProperty("server.port", Integer.class, 9090);
+        log.info("ProxyHub started on port {}", port);
+        log.info("Management UI: http://localhost:{}/actuator", port);
     }
 }
