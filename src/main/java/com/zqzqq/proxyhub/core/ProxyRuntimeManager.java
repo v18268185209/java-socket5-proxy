@@ -1,7 +1,6 @@
 package com.zqzqq.proxyhub.core;
 
 import com.zqzqq.proxyhub.config.ProxyProperties;
-import com.zqzqq.proxyhub.core.acl.AccessControlService;
 import com.zqzqq.proxyhub.core.metrics.ProxyFailureReason;
 import com.zqzqq.proxyhub.core.metrics.ProxyMetricsService;
 import jakarta.annotation.PreDestroy;
@@ -21,18 +20,15 @@ public class ProxyRuntimeManager implements ApplicationRunner {
     private final ProxyProperties properties;
     private final List<ProxyServer> proxyServers;
     private final ProxyMetricsService metricsService;
-    private final AccessControlService accessControlService;
     private final AtomicBoolean started = new AtomicBoolean(false);
 
     public ProxyRuntimeManager(
             ProxyProperties properties,
             List<ProxyServer> proxyServers,
-            ProxyMetricsService metricsService,
-            AccessControlService accessControlService) {
+            ProxyMetricsService metricsService) {
         this.properties = properties;
         this.proxyServers = proxyServers;
         this.metricsService = metricsService;
-        this.accessControlService = accessControlService;
     }
 
     @Override
@@ -85,22 +81,12 @@ public class ProxyRuntimeManager implements ApplicationRunner {
                 log.warn("Failed to stop listener {}", server.name(), e);
             }
         }
-        // FIX: Clear active sessions to prevent memory leaks on stop/restart
-        metricsService.clearAllSessions();
         started.set(proxyServers.stream().anyMatch(ProxyServer::isRunning));
     }
 
     public synchronized void restartAll() {
         stopAll();
         startAll();
-    }
-
-    public AccessControlService getAccessControlService() {
-        return accessControlService;
-    }
-
-    public ProxyMetricsService getMetricsService() {
-        return metricsService;
     }
 
     public synchronized void reloadAll() {

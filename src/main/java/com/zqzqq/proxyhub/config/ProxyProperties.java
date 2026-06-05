@@ -302,7 +302,6 @@ public class ProxyProperties {
         private List<String> allowClientCidrs = new ArrayList<>();
         private List<String> denyTargetHosts = new ArrayList<>();
         private List<Integer> denyTargetPorts = new ArrayList<>();
-        private List<Integer> allowTargetPorts = new ArrayList<>();
 
         public boolean isEnabled() {
             return enabled;
@@ -334,14 +333,6 @@ public class ProxyProperties {
 
         public void setDenyTargetPorts(List<Integer> denyTargetPorts) {
             this.denyTargetPorts = denyTargetPorts;
-        }
-
-        public List<Integer> getAllowTargetPorts() {
-            return allowTargetPorts;
-        }
-
-        public void setAllowTargetPorts(List<Integer> allowTargetPorts) {
-            this.allowTargetPorts = allowTargetPorts;
         }
     }
 

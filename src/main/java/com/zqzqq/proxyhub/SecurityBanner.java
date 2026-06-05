@@ -2,30 +2,33 @@ package com.zqzqq.proxyhub;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.core.annotation.Order;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Displays security hardening banner at application startup.
+ * Prints a security banner when the application is ready.
  */
 @Component
-@Order(1)
-public class SecurityBanner implements CommandLineRunner {
+class SecurityBanner {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityBanner.class);
 
-    @Override
-    public void run(String... args) {
-        System.out.println("\n" +
-            "╔══════════════════════════════════════════════════════════╗\n" +
-            "║              ProxyHub Security Notice                    ║\n" +
-            "║                                                          ║\n" +
-            "║  1. Change default credentials immediately!              ║\n" +
-            "║  2. Configure management CIDR whitelist                  ║\n" +
-            "║  3. Review ACL port restrictions                         ║\n" +
-            "║  4. Enable TLS for management interface in prod          ║\n" +
-            "║  5. Set proxy.acl.deny-target-ports for dangerous ports  ║\n" +
-            "╚══════════════════════════════════════════════════════════╝\n");
+    @EventListener(ApplicationReadyEvent.class)
+    public void print() {
+        System.out.println();
+        System.out.println("╔══════════════════════════════════════════════════════════╗");
+        System.out.println("║              ProxyHub Security Notice                     ║");
+        System.out.println("╠══════════════════════════════════════════════════════════╣");
+        System.out.println("║  ⚠️  Please verify the following:                        ║");
+        System.out.println("║                                                          ║");
+        System.out.println("║  1. Change default passwords (admin/admin → strong)       ║");
+        System.out.println("║  2. Review ACL rules and management CIDRs                ║");
+        System.out.println("║  3. Configure production TLS if exposed to internet       ║");
+        System.out.println("║  4. Review audit log paths and retention                 ║");
+        System.out.println("║                                                          ║");
+        System.out.println("║  See documentation for hardening guide.                  ║");
+        System.out.println("╚══════════════════════════════════════════════════════════╝");
+        System.out.println();
     }
 }

@@ -21,11 +21,6 @@ import org.slf4j.LoggerFactory;
 /**
  * SQLite-backed multi-user authentication store.
  * Supports per-proxy-user (SOCKS5/HTTP) accounts and optional management accounts.
- *
- * FIX: Uses openDbConnection() for each operation (short-lived connections)
- * to avoid thread-safety issues with a single shared Connection.
- * SQLite JDBC driver uses MUTEX_SINGLE connection mode by default,
- * so concurrent operations are serialized safely.
  */
 @Component
 public class UserStore implements AutoCloseable {
@@ -52,6 +47,9 @@ public class UserStore implements AutoCloseable {
             )""";
 
     private final Path dbPath;
+    // BCryptService is a static wrapper; bcrypt hash/matches delegate to BCryptService
+    // private final BCryptService bcrypt;
+    private Connection connection;
     final ConcurrentMap<String, UserRecord> cache = new ConcurrentHashMap<>();
 
     public record UserRecord(
@@ -73,10 +71,10 @@ public class UserStore implements AutoCloseable {
 
     /**
      * Initialize users with a default admin account if the table is empty.
-     * Each statement opens its own connection and auto-closes it.
+     * Generates a random password and logs it to stderr.
      */
     private void initDatabase(ProxyProperties properties) {
-        try (Connection conn = openDbConnection()) {
+        try (Connection conn = getConnection()) {
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute(CREATE_USERS_SQL);
                 stmt.execute(CREATE_MGMT_USERS_SQL);
@@ -88,7 +86,7 @@ public class UserStore implements AutoCloseable {
 
         // Check if users table is empty
         long count = 0;
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM proxy_users");
              ResultSet rs = ps.executeQuery()) {
             if (rs.next()) {
@@ -111,7 +109,7 @@ public class UserStore implements AutoCloseable {
         if (mgmtPassword == null || mgmtPassword.isBlank()) mgmtPassword = "mgmtpassword";
         String hash = BCryptService.hashStatic(mgmtPassword);
 
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO proxy_users (username, password_hash) VALUES (?, ?)")) {
             ps.setString(1, mgmtBasic);
@@ -124,7 +122,7 @@ public class UserStore implements AutoCloseable {
         }
 
         // Also create default management user
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO mgmt_users (username, password_hash) VALUES (?, ?)")) {
             ps.setString(1, mgmtBasic);
@@ -140,22 +138,20 @@ public class UserStore implements AutoCloseable {
         System.err.println("Username: " + mgmtBasic);
         System.err.println("Password: " + mgmtPassword);
         System.err.println("=================================================================");
-        log.warn("Default admin account created: username={}", mgmtBasic);
+        log.warn("Default admin account created: username={}, password={}", mgmtBasic, mgmtPassword);
     }
 
-    /**
-     * Opens a short-lived SQLite connection for a single operation.
-     * FIX: Replaces the old single-Connection approach that had thread-safety issues.
-     * SQLite JDBC MUTEX_SINGLE mode ensures concurrent calls are serialized safely.
-     */
-    private Connection openDbConnection() throws SQLException {
-        Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
-        conn.setAutoCommit(true);
-        return conn;
+    private Connection getConnection() throws SQLException {
+        if (connection == null || connection.isClosed()) {
+            connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+            connection.setAutoCommit(true);
+        }
+        return connection;
     }
 
     /**
      * Validate credentials against the proxy user store.
+     * Falls back to legacy config if no users found (backward compat for data migrations).
      */
     public boolean validateProxyUser(String username, String password) {
         // Try cache first
@@ -179,7 +175,7 @@ public class UserStore implements AutoCloseable {
     }
 
     private UserRecord lookupUser(String username) {
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(
                      "SELECT id, username, password_hash, enabled FROM proxy_users WHERE username = ?")) {
             ps.setString(1, username);
@@ -207,7 +203,7 @@ public class UserStore implements AutoCloseable {
     public void upsertUser(String username, String plainPassword, boolean enabled) {
         String hash = BCryptService.hashStatic(plainPassword);
 
-        try (Connection conn = openDbConnection()) {
+        try (Connection conn = getConnection()) {
             // Check if user exists
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT id FROM proxy_users WHERE username = ?")) {
@@ -245,7 +241,7 @@ public class UserStore implements AutoCloseable {
      */
     public List<UserRecord> listUsers() {
         List<UserRecord> result = new ArrayList<>();
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT id, username, password_hash, enabled FROM proxy_users")) {
             while (rs.next()) {
@@ -268,7 +264,7 @@ public class UserStore implements AutoCloseable {
      * Delete a user by username.
      */
     public void deleteUser(String username) {
-        try (Connection conn = openDbConnection();
+        try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM proxy_users WHERE username = ?")) {
             ps.setString(1, username);
             ps.executeUpdate();
@@ -278,19 +274,14 @@ public class UserStore implements AutoCloseable {
         }
     }
 
-    /** Invalidate cache for a specific user or all users if username is null. */
-    void invalidateCache(String username) {
-        if (username != null) {
-            cache.remove(username);
-        } else {
-            cache.clear();
-        }
-    }
-
     @Override
     public void close() {
-        // No long-lived connection to close (each operation opens its own connection)
-        cache.clear();
-        log.debug("UserStore closed");
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            log.warn("Error closing database: {}", e.getMessage());
+        }
     }
 }

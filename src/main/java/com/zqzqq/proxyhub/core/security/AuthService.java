@@ -3,15 +3,13 @@ package com.zqzqq.proxyhub.core.security;
 import com.zqzqq.proxyhub.config.ProxyProperties;
 import java.util.List;
 import org.slf4j.Logger;
+import java.util.List;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Authentication service - unified auth entry point.
- *
- * FIX: Simplified to use UserStore exclusively; removed redundant
- * AuthService.validateManagement() that duplicated UserStore logic.
- * Legacy config fallback removed since UserStore always initializes.
+ * Authentication service that supports both legacy single-user config
+ * and the new multi-user SQLite store.
  */
 @Service
 public class AuthService {
@@ -21,9 +19,13 @@ public class AuthService {
     private final ProxyProperties properties;
     private final UserStore userStore;
 
+    private final boolean userStoreAvailable;
+
     public AuthService(ProxyProperties properties, UserStore userStore) {
         this.properties = properties;
         this.userStore = userStore;
+        // UserStore is always available after initialization
+        this.userStoreAvailable = true;
     }
 
     public boolean isSocksAuthRequired() {
@@ -35,8 +37,7 @@ public class AuthService {
     }
 
     /**
-     * Validate SOCKS5 credentials against the multi-user store.
-     * FIX: Removed redundant legacy fallback - UserStore is always available.
+     * Validate SOCKS5 credentials using multi-user store (with legacy fallback).
      */
     public boolean validateSocksUserPassword(String username, String password) {
         ProxyProperties.AuthProperties auth = properties.getSocks().getAuth();
@@ -48,16 +49,20 @@ public class AuthService {
             return false;
         }
 
-        boolean ok = userStore.validateProxyUser(username, password);
-        if (!ok) {
-            log.debug("SOCKS5 auth failed for user={}", maskSensitive(username));
+        // Try multi-user store first
+        if (userStore != null && userHasRecords()) {
+            boolean ok = userStore.validateProxyUser(username, password);
+            log.debug("SOCKS5 auth attempt: user={}, store=multi, result={}",
+                    maskPassword(username, password), ok);
+            return ok;
         }
-        return ok;
+
+        // Legacy fallback: config file
+        return auth.getUsername().equals(username) && auth.getPassword().equals(password);
     }
 
     /**
-     * Validate HTTP Basic proxy credentials against the multi-user store.
-     * FIX: Unified with validateSocksUserPassword via userStore.
+     * Validate HTTP Basic proxy credentials using multi-user store (with legacy fallback).
      */
     public boolean validateHttpBasic(String username, String password) {
         ProxyProperties.AuthProperties auth = properties.getHttp().getAuth();
@@ -69,29 +74,59 @@ public class AuthService {
             return false;
         }
 
-        boolean ok = userStore.validateProxyUser(username, password);
-        if (!ok) {
-            log.debug("HTTP auth failed for user={}", maskSensitive(username));
+        // Try multi-user store first
+        if (userStore != null && userHasRecords()) {
+            boolean ok = userStore.validateProxyUser(username, password);
+            log.debug("HTTP auth attempt: user={}, store=multi, result={}",
+                    maskPassword(username, password), ok);
+            return ok;
         }
-        return ok;
+
+        // Legacy fallback: config file
+        return auth.getUsername().equals(username) && auth.getPassword().equals(password);
     }
 
     /**
-     * Validate management UI login.
-     * FIX: Delegates to UserStore exclusively.
+     * Validate management UI login using mgmt_users table.
      */
     public boolean validateManagementUser(String username, String password) {
         if (username == null || username.isBlank()) {
             return false;
         }
+        if (userStore == null) {
+            // Fall back to config
+            ProxyProperties.ManagementProperties mgmt = properties.getManagement();
+            if (!mgmt.isAllowBasicAuth() || !mgmt.getBasic().isEnabled()) {
+                return false;
+            }
+            return mgmt.getBasic().getUsername().equals(username)
+                    && mgmt.getBasic().getPassword().equals(password);
+        }
         return userStore.validateProxyUser(username, password);
     }
 
-    private String maskSensitive(String value) {
-        if (value == null || value.isBlank()) {
-            return "***";
+    /**
+     * Check if the user store has any records (i.e. not a fresh DB).
+     */
+    private boolean userHasRecords() {
+        if (userStore == null) return false;
+        try {
+            var users = userStore.listUsers();
+            return !users.isEmpty();
+        } catch (Exception e) {
+            log.warn("Failed to check user store: {}", e.getMessage());
+            return false;
         }
-        return value;
+    }
+
+    /**
+     * Mask password in log output for security.
+     */
+    private String maskPassword(String username, String password) {
+        if (password == null) {
+            return username + "@?";
+        }
+        return username + "@" + (password.length() <= 2 ? "**" : password.charAt(0) + "***");
     }
 
     // Expose store operations for management API

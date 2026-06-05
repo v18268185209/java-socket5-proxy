@@ -33,7 +33,6 @@ public class ProxyMetricsService {
     private final LongAdder httpsTunnelConnections = new LongAdder();
     private final AtomicLong sessionSequence = new AtomicLong();
 
-    // FIX: Use ConcurrentHashMap for active sessions; entries are removed in closeSession
     private final Map<String, ConnectionSession> activeSessions = new ConcurrentHashMap<>();
     private final Map<String, LongAdder> failureReasons = new ConcurrentHashMap<>();
     private final Deque<ProxyEvent> recentEvents = new ArrayDeque<>();
@@ -63,10 +62,6 @@ public class ProxyMetricsService {
         return sessionId;
     }
 
-    /**
-     * FIX: Properly close session and remove from active map.
-     * This prevents memory leaks from stale sessions.
-     */
     public void closeSession(String sessionId, SessionStatus status) {
         if (sessionId == null) {
             return;
@@ -166,15 +161,6 @@ public class ProxyMetricsService {
         if (message != null && !message.isBlank()) {
             addEvent("WARN", "[" + reason + "] " + message);
         }
-    }
-
-    /**
-     * Clear all active sessions (for shutdown/restart).
-     * FIX: Prevents memory leaks when restarting proxy listeners.
-     */
-    public void clearAllSessions() {
-        activeSessions.clear();
-        activeConnections.set(0);
     }
 
     public OverviewSnapshot snapshot() {
