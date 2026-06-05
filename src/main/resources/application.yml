@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: proxy-hub
+  thymeleaf:
+    cache: false
+server:
+  port: 9090
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+proxy:
+  socks:
+    name: SOCKS5
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 1080
+    auth:
+      enabled: true
+      username: proxyadmin
+      # ⚠️  Default password — CHANGE IMMEDIATELY. Multi-user SQLite store takes over on first run.
+      password: admin
+  http:
+    name: HTTP
+    enabled: true
+    bind-host: 0.0.0.0
+    port: 8080
+    engine: legacy
+    # squid legacy
+    auth:
+      enabled: true
+      username: admin
+      # ⚠️  Default password — CHANGE IMMEDIATELY on first use.
+      # After first start, multi-user store (SQLite) takes over.
+      password: admin
+    squid:
+      executable: squid
+      config-path: ./conf/squid/squid.conf
+      workdir: .
+      access-log-path: ./logs/squid/access.log
+      manage-config: true
+      foreground: true
+      extra-args: []
+  acl:
+    enabled: true
+    # When CIDRs are empty, all clients are allowed (whitelist mode is off).
+    # To enable whitelist mode, add allowed CIDRs below:
+    # allow-client-cidrs:
+    #   - 10.0.0.0/8
+    allow-client-cidrs: []
+    deny-target-hosts:
+      - localhost
+      - "*.internal.local"
+    deny-target-ports:
+      - 25
+      - 3306
+      - 6379
+  performance:
+    connect-timeout-millis: 10000
+    idle-timeout-seconds: 120
+    boss-threads: 1
+    worker-threads: 0
+    backlog: 1024
+    max-connections-per-client: 0
+    recv-byte-buf-min: 1024
+    recv-byte-buf-initial: 8192
+    recv-byte-buf-max: 65536
+    write-buffer-low-water-mark: 32768
+    write-buffer-high-water-mark: 131072
+    prefer-native-transport: true
+    http-pending-request-max-bytes: 1048576
+  users:
+    store-path: ./logs/proxy-users.db
+    legacy-fallback-enabled: true
+  dashboard:
+    refresh-seconds: 2
+    max-recent-events: 3000
+    timezone: Asia/Shanghai
+    record-session-lifecycle-events: false
+  management:
+    enabled: true
+    protect-actuator: true
+    allow-cidrs:
+      - 127.0.0.1/32
+      - ::1/128
+    allow-basic-auth: true
+    allow-token-auth: true
+    access-token: ""
+    basic:
+      enabled: true
+      username: mgmtadmin
+      # ⚠️  CHANGE THIS PASSWORD on first use
+      password: mgmtadmin
+
+logging:
+  level:
+    root: INFO
+    com.zqzqq.proxyhub: INFO
+
+menu-ops:
+  enabled: false
+  bash-path: /bin/bash
+  workdir: .
+  timeout-seconds: 3600
+  max-log-lines: 3000
+  max-history: 100
+  max-concurrency: 4
+  allow-raw-args: true
+  allow-destructive: false
+  allow-remote-scripts: false
+  audit-log-path: /var/log/proxy-hub/strategy-audit.log
+  audit-db-enabled: true
+  audit-db-path: ./logs/menu-ops-audit.db
+  audit-db-retention-days: 90
+  audit-db-max-rows: 200000
+  diagnostics-dir: ./logs/diagnostics
+  diagnostics-retention-days: 14
+  diagnostics-max-files: 300
+  diagnostics-max-download-bytes: 52428800
+  auto-switch-endpoints: engage.cloudflareclient.com:2408,162.159.192.1:2408,162.159.193.1:2408
+  auto-switch-stacks: d,4,6

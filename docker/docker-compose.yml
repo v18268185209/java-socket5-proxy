@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  proxy-hub:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: proxy-hub
+    restart: unless-stopped
+    ports:
+      - "9090:9090"  # 管理界面
+      - "1080:1080"  # SOCKS5
+      - "8080:8080"  # HTTP 代理
+    volumes:
+      - ./data:/app/data           # SQLite 数据库和数据文件
+      - ./conf:/app/conf           # 配置持久化
+      - ./logs:/app/logs           # 日志持久化
+    environment:
+      - TZ=Asia/Shanghai
+      - JAVA_OPTS=-Xmx512m -Xms128m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  data:
+  conf:
+  logs:

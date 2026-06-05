@@ -1,0 +1,38 @@
+# Java
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Config (local overrides)
+conf/
+*.local.yml
+
+# Frontend
+web-ui/node_modules/
+web-ui/dist/
+
+# Docker
+*.pid
+*.seed
+*.log.gz
+
+# Temp
+*.tmp
+*.bak
