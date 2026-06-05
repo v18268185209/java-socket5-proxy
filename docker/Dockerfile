@@ -36,7 +36,7 @@ RUN addgroup -g 1000 -S proxyhub && \
 COPY --from=builder /app/target/*.jar app.jar
 
 # 创建必要目录并设置权限
-RUN mkdir -p /app/logs /app/conf && \
+RUN mkdir -p /app/logs /app/conf /app/data && \
     chown -R proxyhub:proxyhub /app
 
 USER proxyhub

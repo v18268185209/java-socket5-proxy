@@ -12,7 +12,7 @@ services:
       - "1080:1080"  # SOCKS5
       - "8080:8080"  # HTTP 代理
     volumes:
-      - ./data:/app/logs           # 数据持久化（SQLite 数据库等）
+      - ./data:/app/data           # SQLite 数据库和数据文件
       - ./conf:/app/conf           # 配置持久化
       - ./logs:/app/logs           # 日志持久化
     environment:

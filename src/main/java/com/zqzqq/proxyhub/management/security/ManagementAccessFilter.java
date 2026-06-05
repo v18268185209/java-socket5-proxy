@@ -88,10 +88,11 @@ public class ManagementAccessFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Check if any CIDR rule allows all traffic.
+     * Check if the CIDR configuration effectively allows all traffic.
+     * An empty list means no CIDR restriction (allows all).
      */
     private boolean allowsAllTraffic() {
-        return allowCidrs.stream().anyMatch(m -> true);
+        return allowCidrs.isEmpty();
     }
 
     private boolean isAuthorized(HttpServletRequest request) {

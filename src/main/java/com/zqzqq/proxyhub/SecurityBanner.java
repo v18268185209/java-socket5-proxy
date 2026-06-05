@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 
 /**
  * Displays security hardening banner at application startup.
- * Only prints username, never password in startup logs.
  */
 @Component
 @Order(1)
@@ -18,7 +17,15 @@ public class SecurityBanner implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        // Only log once at debug level - banner prints to console anyway
-        log.debug("ProxyHub started - review security settings");
+        System.out.println("\n" +
+            "╔══════════════════════════════════════════════════════════╗\n" +
+            "║              ProxyHub Security Notice                    ║\n" +
+            "║                                                          ║\n" +
+            "║  1. Change default credentials immediately!              ║\n" +
+            "║  2. Configure management CIDR whitelist                  ║\n" +
+            "║  3. Review ACL port restrictions                         ║\n" +
+            "║  4. Enable TLS for management interface in prod          ║\n" +
+            "║  5. Set proxy.acl.deny-target-ports for dangerous ports  ║\n" +
+            "╚══════════════════════════════════════════════════════════╝\n");
     }
 }
