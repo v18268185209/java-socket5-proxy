@@ -37,7 +37,7 @@ public class ProxyRuntimeManager implements ApplicationRunner {
     }
 
     public synchronized void startAll() {
-        log.info("Effective proxy config: socks(enabled={}, bind={}, port={}, auth={}) | http(enabled={}, bind={}, port={}, engine={}, auth={}) | acl(enabled={}) | maxConnectionsPerClient={}",
+        log.info("Effective proxy config: socks(enabled={}, bind={}, port={}, auth={}) | http(enabled={}, bind={}, port={}, engine={}, auth={}) | tcp(enabled={}, bind={}, port={}) | udp(enabled={}, bind={}, port={}) | acl(enabled={}) | maxConnectionsPerClient={}",
                 properties.getSocks().isEnabled(),
                 properties.getSocks().getBindHost(),
                 properties.getSocks().getPort(),

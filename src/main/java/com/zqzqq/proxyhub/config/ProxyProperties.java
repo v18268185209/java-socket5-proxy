@@ -22,6 +22,12 @@ public class ProxyProperties {
     private HttpListenerProperties http = new HttpListenerProperties("HTTP", 8080);
 
     @Valid
+    private TcpListenerProperties tcp = new TcpListenerProperties("TCP", 1081);
+
+    @Valid
+    private UdpListenerProperties udp = new UdpListenerProperties("UDP", 1194);
+
+    @Valid
     private AclProperties acl = new AclProperties();
 
     @Valid
@@ -50,6 +56,23 @@ public class ProxyProperties {
 
     public void setHttp(HttpListenerProperties http) {
         this.http = http;
+    }
+
+
+    public TcpListenerProperties getTcp() {
+        return tcp;
+    }
+
+    public void setTcp(TcpListenerProperties tcp) {
+        this.tcp = tcp;
+    }
+
+    public UdpListenerProperties getUdp() {
+        return udp;
+    }
+
+    public void setUdp(UdpListenerProperties udp) {
+        this.udp = udp;
     }
 
     public AclProperties getAcl() {
@@ -336,6 +359,74 @@ public class ProxyProperties {
         }
     }
 
+    public static class TcpListenerProperties {
+
+        private String name = "TCP";
+        private boolean enabled = false;
+
+        @NotBlank
+        private String bindHost = "0.0.0.0";
+
+        @Min(1)
+        @Max(65535)
+        private int port = 1081;
+
+        @Valid
+        private AuthProperties auth = new AuthProperties();
+
+        public TcpListenerProperties() {}
+
+        public TcpListenerProperties(String name, int port) {
+            this.name = name;
+            this.port = port;
+        }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getBindHost() { return bindHost; }
+        public void setBindHost(String bindHost) { this.bindHost = bindHost; }
+        public int getPort() { return port; }
+        public void setPort(int port) { this.port = port; }
+        public AuthProperties getAuth() { return auth; }
+        public void setAuth(AuthProperties auth) { this.auth = auth; }
+    }
+
+    public static class UdpListenerProperties {
+
+        private String name = "UDP";
+        private boolean enabled = false;
+
+        @NotBlank
+        private String bindHost = "0.0.0.0";
+
+        @Min(1)
+        @Max(65535)
+        private int port = 1194;
+
+        @Valid
+        private AuthProperties auth = new AuthProperties();
+
+        public UdpListenerProperties() {}
+
+        public UdpListenerProperties(String name, int port) {
+            this.name = name;
+            this.port = port;
+        }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getBindHost() { return bindHost; }
+        public void setBindHost(String bindHost) { this.bindHost = bindHost; }
+        public int getPort() { return port; }
+        public void setPort(int port) { this.port = port; }
+        public AuthProperties getAuth() { return auth; }
+        public void setAuth(AuthProperties auth) { this.auth = auth; }
+    }
+
     public static class PerformanceProperties {
 
         @Min(1000)
@@ -479,6 +570,7 @@ public class ProxyProperties {
         public void setHttpPendingRequestMaxBytes(int httpPendingRequestMaxBytes) {
             this.httpPendingRequestMaxBytes = httpPendingRequestMaxBytes;
         }
+
 
         @AssertTrue(message = "recvByteBufInitial must be between recvByteBufMin and recvByteBufMax")
         public boolean isRecvAllocatorRangeValid() {
