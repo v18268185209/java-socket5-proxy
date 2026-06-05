@@ -33,12 +33,15 @@ public class ConfigService {
     private final ProxyProperties proxyProperties;
     private final ProxyRuntimeManager runtimeManager;
     private final UserStore userStore;
+    private final com.zqzqq.proxyhub.core.acl.AccessControlService accessControlService;
     private final AtomicBoolean reloading = new AtomicBoolean(false);
 
     public ConfigService(
             ProxyProperties proxyProperties,
             ProxyRuntimeManager runtimeManager,
-            UserStore userStore) {
+            UserStore userStore,
+            com.zqzqq.proxyhub.core.acl.AccessControlService accessControlService) {
+        this.accessControlService = accessControlService;
         this.proxyProperties = proxyProperties;
         this.runtimeManager = runtimeManager;
         this.userStore = userStore;
@@ -197,7 +200,7 @@ public class ConfigService {
 
             // 2. Apply ACL changes
             try {
-                runtimeManager.getAccessControlService().reload();
+                accessControlService.reload();
                 log.info("ACL rules reloaded");
             } catch (Exception e) {
                 log.warn("Failed to reload ACL: {}", e.getMessage());
